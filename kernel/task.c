@@ -55,12 +55,13 @@ void task_start_multitasking(void) {
  *
  *  [ task_exit_wrapper ]  ← dönüş adresi (görev bitince)
  *  [ entry             ]  ← ret ile atlanır (ilk switch)
- *  [ 0 (edi) ]
- *  [ 0 (esi) ]
+ *  [ 0x202 (eflags)    ]  ← popfd ile yüklenir (IF=1: interrupt açık)
+ *  [ 0 (ebp) ]
  *  [ 0 (ebx) ]
- *  [ 0 (ebp) ]   ← esp buraya ayarlanır
+ *  [ 0 (esi) ]
+ *  [ 0 (edi) ]   ← esp buraya ayarlanır
  *
- * context_switch: pop edi, pop esi, pop ebx, pop ebp, ret
+ * context_switch: pop edi, pop esi, pop ebx, pop ebp, popfd, ret
  * ============================================================ */
 task_t *task_create(const char *name, void (*entry)(void), uint8_t priority) {
     /* Önce biten görevleri topla: slot ve stack belleğini geri kazan
@@ -92,9 +93,9 @@ task_t *task_create(const char *name, void (*entry)(void), uint8_t priority) {
 
     /*
      * Stack'i yukarıdan aşağı doldur:
-     * switch.asm:  push ebp/ebx/esi/edi → kaydeder
-     *              pop edi/esi/ebx/ebp  → geri yükler
-     *              ret                  → stack'teki adrese atlar
+     * switch.asm:  pushfd; push ebp/ebx/esi/edi → kaydeder
+     *              pop edi/esi/ebx/ebp; popfd    → geri yükler
+     *              ret                           → stack'teki adrese atlar
      *
      * İlk çalışma için stack'i hazırla:
      */
@@ -104,11 +105,14 @@ task_t *task_create(const char *name, void (*entry)(void), uint8_t priority) {
     *(--sp) = (uint32_t)task_exit_wrapper;
     /* İlk ret hedefi: entry fonksiyonu */
     *(--sp) = (uint32_t)entry;
-    /* pop edi, esi, ebx, ebp için sıfırlar */
-    *(--sp) = 0; /* edi */
-    *(--sp) = 0; /* esi */
-    *(--sp) = 0; /* ebx */
+    /* popfd için EFLAGS: IF=1 (0x200) + rezerve bit1 (0x2) => interrupt açık.
+     * Yeni görev kendi başına interrupt'lar açık olarak başlar. */
+    *(--sp) = 0x202;
+    /* pop ebp, ebx, esi, edi için sıfırlar (context_switch pop sırası: edi önce) */
     *(--sp) = 0; /* ebp */
+    *(--sp) = 0; /* ebx */
+    *(--sp) = 0; /* esi */
+    *(--sp) = 0; /* edi */
 
     t->context.esp = (uint32_t)sp;
     t->page_dir    = 0;
@@ -178,9 +182,17 @@ static void task_reap(void) {
 void task_yield(void) {
     if (!multitasking_on || !current_task) return;
 
+    /* Kritik bölge: seçim + current_task güncellemesi + switch timer
+     * IRQ'suna karşı atomik olmalı. irq_save() interrupt'ları kapatır ve
+     * çağıranın IF durumunu f'e saklar. context_switch EFLAGS'i görev
+     * başına koruduğu için, her görev kendi irq_restore'unu geri
+     * döndüğünde kendi stack'inde çalıştırır; yeni görevler ise IF=1'li
+     * kendi frame'leriyle başlar. */
+    uint32_t f = irq_save();
+
     task_t *prev = current_task;
     task_t *next = scheduler_next();
-    if (prev == next) return;
+    if (prev == next) { irq_restore(f); return; }
 
     if (prev->state == TASK_RUNNING) prev->state = TASK_READY;
     next->state      = TASK_RUNNING;
@@ -190,6 +202,8 @@ void task_yield(void) {
     if (next->page_dir) paging_switch(next->page_dir);
 
     context_switch(&prev->context, &next->context);
+
+    irq_restore(f);
 }
 
 /* ============================================================
