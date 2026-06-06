@@ -11,14 +11,17 @@
  * framebuffer API'si aynı).
  *
  * VGA Mode 13h: 0xA0000, 320×200, 1 byte/pixel (palette)
- * Bizim yöntemimiz: 32-bit çift buffer + son render'da palette map
+ * Bizim yöntemimiz: 8-bit çift buffer (doğrudan palette index). Renkler
+ * yazma anında 32-bit ARGB'den palette index'e çevrilir; gui_render ise
+ * sadece düz bir memcpy olur. (Eski 32-bit buffer 256KB yer kaplıyor ve
+ * her karede 64000 piksel dönüştürüyordu; bu 64KB + tek memcpy.)
  * ============================================================ */
 
 #define FRAMEBUFFER  ((uint8_t *)0xA0000)
 #define BUF_SIZE     (GUI_WIDTH * GUI_HEIGHT)
 
-/* 32-bit çift buffer (off-screen) */
-static uint32_t backbuffer[GUI_WIDTH * GUI_HEIGHT];
+/* 8-bit çift buffer (off-screen): her bayt bir VGA palette index'i */
+static uint8_t backbuffer[BUF_SIZE];
 
 /* Pencere tablosu (gui_init bunları sıfırladığı için burada tanımlı) */
 static window_t windows[MAX_WINDOWS];
@@ -29,14 +32,19 @@ static inline void outb(uint16_t p, uint8_t v) { __asm__ volatile("outb %0,%1"::
 static inline uint8_t inb(uint16_t p) { uint8_t v; __asm__ volatile("inb %1,%0":"=a"(v):"Nd"(p)); return v; }
 
 /* ============================================================
- * 5-6-5 renk → VGA palette index (en yakın) — basit ağaçlama
+ * 32-bit ARGB → VGA palette index.
+ * Yüklenen palet 6×6×6 web paleti (index = ri*36 + gi*6 + bi) +
+ * sondaki gri tonları. (Eski rgb32_to_vga 3-3-2 paketlemesi bu paletle
+ * uyuşmuyordu ve kullanılmıyordu; kaldırıldı.)
  * ============================================================ */
-static uint8_t rgb32_to_vga(uint32_t c) {
+static uint8_t rgb32_to_index(uint32_t c) {
     uint8_t r = (c >> 16) & 0xFF;
     uint8_t g = (c >>  8) & 0xFF;
     uint8_t b =  c        & 0xFF;
-    /* 6-bit renk uzayı: 0-63 */
-    return (uint8_t)(((r >> 5) << 5) | ((g >> 5) << 2) | (b >> 6));
+    uint8_t ri = r / 52; if (ri > 5) ri = 5;
+    uint8_t gi = g / 52; if (gi > 5) gi = 5;
+    uint8_t bi = b / 52; if (bi > 5) bi = 5;
+    return (uint8_t)(ri * 36 + gi * 6 + bi);
 }
 
 /* ============================================================
@@ -173,15 +181,14 @@ void gui_init(void) {
  * ============================================================ */
 void gui_put_pixel(int x, int y, uint32_t color) {
     if (x < 0 || x >= GUI_WIDTH || y < 0 || y >= GUI_HEIGHT) return;
-    backbuffer[y * GUI_WIDTH + x] = color;
+    backbuffer[y * GUI_WIDTH + x] = rgb32_to_index(color);
 }
 
 /* ============================================================
  * Ekranı doldur
  * ============================================================ */
 void gui_clear(uint32_t color) {
-    for (int i = 0; i < GUI_WIDTH * GUI_HEIGHT; i++)
-        backbuffer[i] = color;
+    memset(backbuffer, rgb32_to_index(color), BUF_SIZE);
 }
 
 /* ============================================================
