@@ -250,6 +250,47 @@ int udp_send(ip_addr_t dst_ip, uint16_t src_port, uint16_t dst_port,
 }
 
 /* ============================================================
+ * ICMP echo (ping) yanıtı oluştur ve gönder.
+ * req_* işaretçileri rx_buffer içine bakar; yanıt ayrı bir tampona
+ * kurulur. icmp_len, ICMP başlığı + verisi (çağıran sınırlamış olmalı).
+ * ============================================================ */
+static void icmp_echo_reply(eth_header_t *req_eth, ip_header_t *req_ip,
+                            icmp_header_t *req_icmp, uint16_t icmp_len) {
+    if (!net.available) return;
+    static uint8_t rb[ETH_FRAME_MAX];
+    if ((uint32_t)ETH_HDR_LEN + sizeof(ip_header_t) + icmp_len > sizeof(rb)) return;
+    memset(rb, 0, sizeof(rb));
+
+    eth_header_t  *eth  = (eth_header_t *)rb;
+    ip_header_t   *ip   = (ip_header_t *)(rb + ETH_HDR_LEN);
+    icmp_header_t *icmp = (icmp_header_t *)(rb + ETH_HDR_LEN + sizeof(ip_header_t));
+
+    /* Ethernet: gönderene geri */
+    eth->dst  = req_eth->src;
+    eth->src  = net.mac;
+    eth->type = net_htons(ETH_TYPE_IP);
+
+    /* IP: kaynak/hedef ters çevir */
+    ip->version_ihl = 0x45;
+    ip->ttl         = 64;
+    ip->protocol    = IP_PROTO_ICMP;
+    ip->src         = net.ip;
+    ip->dst         = req_ip->src;
+    uint16_t ip_len = (uint16_t)(sizeof(ip_header_t) + icmp_len);
+    ip->total_len   = net_htons(ip_len);
+    ip->checksum    = 0;
+    ip->checksum    = ip_checksum(ip, sizeof(ip_header_t));
+
+    /* ICMP: echo request -> echo reply (type 0); id/seq/veriyi koru */
+    memcpy(icmp, req_icmp, icmp_len);
+    icmp->type     = 0;
+    icmp->checksum = 0;
+    icmp->checksum = ip_checksum(icmp, icmp_len);
+
+    net_send_raw(rb, (uint16_t)(ETH_HDR_LEN + ip_len));
+}
+
+/* ============================================================
  * RX: gelen paketleri işle
  * ============================================================ */
 void net_receive(void) {
@@ -273,11 +314,23 @@ void net_receive(void) {
             pkt_len >= ETH_HDR_LEN + sizeof(ip_header_t)) {
             ip_header_t *ip = (ip_header_t *)(pkt + ETH_HDR_LEN);
             if (ip->protocol == IP_PROTO_ICMP) {
-                /* ICMP echo reply için basit log */
                 char src_str[16];
                 ip_to_str(ip->src, src_str);
                 screen_print("[NET] ICMP paketi alindi, kaynak: ");
                 screen_println(src_str);
+
+                /* Echo request (type 8) ise yanıtla. ICMP başlığının
+                 * pakette tam olduğunu doğrula (taşma okuması olmasın). */
+                uint16_t ip_total = net_htons(ip->total_len);
+                if (ip_total >= sizeof(ip_header_t) + sizeof(icmp_header_t) &&
+                    pkt_len >= ETH_HDR_LEN + ip_total) {
+                    icmp_header_t *icmp =
+                        (icmp_header_t *)((uint8_t *)ip + sizeof(ip_header_t));
+                    if (icmp->type == 8) {
+                        icmp_echo_reply(eth, ip, icmp,
+                                        (uint16_t)(ip_total - sizeof(ip_header_t)));
+                    }
+                }
             }
         }
 

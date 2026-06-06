@@ -83,15 +83,13 @@ int elf_load(const uint8_t *data, uint32_t size, elf_program_t *out) {
         }
     }
 
-    /* User stack: 8MB adresinde 16KB */
+    /* User stack: 8MB bölgesinde 16KB. Bu alan PMM'de rezerve ve
+     * identity-map'li (bkz. paging.c yerleşimi), bu yüzden doğrudan
+     * kullanılır — önceki kodun kmalloc'ladığı tampon kullanılmadan
+     * sızıyordu ve asıl stack sıfırlanmıyordu. */
     uint32_t user_stack = 0x800000;
-    uint8_t *stack_mem = (uint8_t *)kmalloc(16384);
-    if (stack_mem) {
-        memset(stack_mem, 0, 16384);
-        out->stack = user_stack + 16384 - 4;
-    } else {
-        out->stack = 0;
-    }
+    memset((void *)user_stack, 0, 16384);
+    out->stack = user_stack + 16384 - 4;
 
     out->valid = 1;
     return 0;

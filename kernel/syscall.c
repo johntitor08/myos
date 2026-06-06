@@ -12,6 +12,19 @@
  *                             EBX=arg1, ECX=arg2, EDX=arg3
  * ============================================================ */
 
+/* Kullanıcı tamponunun izinli aralıkta ve taşmasız olduğunu doğrula.
+ * İzinli kullanıcı bölgesi: ELF yükleme penceresi + user stack (5MB-9MB,
+ * bkz. paging.c yerleşimi). Ring-3'ten gelen pointer'lar bu aralık dışında
+ * olamaz; aksi halde kernel keyfi adresi deref ederdi. */
+#define USER_REGION_LO  0x500000u
+#define USER_REGION_HI  0x900000u
+static int user_buf_ok(uint32_t addr, uint32_t len) {
+    if (len == 0) return 1;
+    if (addr < USER_REGION_LO || addr >= USER_REGION_HI) return 0;
+    if (len > USER_REGION_HI - addr) return 0;   /* taşma / aralık dışı */
+    return 1;
+}
+
 /* SYS_EXIT (0): process sonlandır */
 static uint32_t sys_exit(uint32_t code, uint32_t a2, uint32_t a3, uint32_t a4) {
     (void)a2; (void)a3; (void)a4;
@@ -23,6 +36,7 @@ static uint32_t sys_exit(uint32_t code, uint32_t a2, uint32_t a3, uint32_t a4) {
 /* SYS_WRITE (1): ekrana yaz (fd=1 → stdout) */
 static uint32_t sys_write(uint32_t fd, uint32_t buf_addr, uint32_t len, uint32_t a4) {
     (void)fd; (void)a4;
+    if (!user_buf_ok(buf_addr, len)) return (uint32_t)-1;
     const char *buf = (const char *)buf_addr;
     for (uint32_t i = 0; i < len; i++)
         screen_putchar(buf[i]);
@@ -32,6 +46,7 @@ static uint32_t sys_write(uint32_t fd, uint32_t buf_addr, uint32_t len, uint32_t
 /* SYS_READ (2): klavyeden oku */
 static uint32_t sys_read(uint32_t fd, uint32_t buf_addr, uint32_t len, uint32_t a4) {
     (void)fd; (void)a4;
+    if (!user_buf_ok(buf_addr, len)) return (uint32_t)-1;
     char *buf = (char *)buf_addr;
     uint32_t i = 0;
     /* Basit: fs_read ile dosya oku (fd > 2) veya stdin */

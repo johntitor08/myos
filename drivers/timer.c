@@ -9,7 +9,9 @@
 #define PIT_BASE_FREQ   1193180   /* Hz */
 #define TIMER_FREQ      100       /* Hedef: 100Hz (10ms per tick) */
 
-static uint32_t timer_ticks = 0;
+/* IRQ0 handler ile timer_wait/timer_get_ticks arasında paylaşılır:
+ * volatile olmazsa busy-wait döngüsü okumayı önbelleğe alıp asılabilir. */
+static volatile uint32_t timer_ticks = 0;
 
 static inline void outb(uint16_t port, uint8_t val) {
     __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));

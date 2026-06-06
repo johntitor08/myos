@@ -1,5 +1,6 @@
 #include "../include/memory.h"
 #include "../include/screen.h"
+#include "../include/critical.h"
 
 #define BLOCK_MAGIC     0xDEADBEEF
 #define BLOCK_HEADER    sizeof(mem_block_t)
@@ -74,10 +75,13 @@ void *kmalloc(size_t size) {
     /* 8-byte hizalama */
     size = (size + 7) & ~7;
 
+    /* Free-list IRQ-güvenli: handler içinden de güvenle çağrılabilsin */
+    uint32_t f = irq_save();
     mem_block_t *current = heap_start_block;
 
     while (current) {
         if (current->magic != BLOCK_MAGIC) {
+            irq_restore(f);
             screen_println("[MEMORY] Heap corruption detected!");
             return NULL;
         }
@@ -98,11 +102,14 @@ void *kmalloc(size_t size) {
             current->is_free = 0;
             total_allocated += current->size;
             total_free -= current->size;
-            return (void *)((uint8_t *)current + BLOCK_HEADER);
+            void *ret = (void *)((uint8_t *)current + BLOCK_HEADER);
+            irq_restore(f);
+            return ret;
         }
         current = current->next;
     }
 
+    irq_restore(f);
     screen_println("[MEMORY] Out of memory!");
     return NULL;
 }
@@ -144,7 +151,9 @@ void kfree(void *ptr) {
     if (!ptr) return;
 
     mem_block_t *block = (mem_block_t *)((uint8_t *)ptr - BLOCK_HEADER);
+    uint32_t f = irq_save();
     if (block->magic != BLOCK_MAGIC) {
+        irq_restore(f);
         screen_println("[MEMORY] Double free or corruption!");
         return;
     }
@@ -152,6 +161,7 @@ void kfree(void *ptr) {
     total_allocated -= block->size;
     total_free += block->size;
     merge_free_blocks(block);
+    irq_restore(f);
 }
 
 /* ============================================================

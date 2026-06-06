@@ -38,7 +38,7 @@ static void cmd_help(void) {
     screen_set_color(COLOR_YELLOW,COLOR_BLACK);
     screen_println("MyOS v3.0 Shell:");
     screen_set_color(COLOR_WHITE,COLOR_BLACK);
-    screen_println(" Dosya: ls, cat, write, del");
+    screen_println(" Dosya: ls, cat, write, del, cp, mv, hexdump");
     screen_println(" Sistem: ps, kill, sleep, meminfo, uname, uptime, clear, reboot");
     screen_println(" Hesap: calc <a> <op> <b>     (op: + - * / %)");
     screen_println(" Disk: diskinfo, diskread <lba>");
@@ -55,9 +55,9 @@ static void cmd_uname(void) {
 
 static void cmd_uptime(void) {
     uint32_t t=timer_get_ticks(), s=t/100, m=s/60, h=m/60;
-    screen_print("Uptime: "); screen_print_int((int32_t)h); screen_print("s ");
-    screen_print_int((int32_t)(m%60)); screen_print("d ");
-    screen_print_int((int32_t)(s%60)); screen_print("sn (");
+    screen_print("Uptime: "); screen_print_int((int32_t)h); screen_print("h ");
+    screen_print_int((int32_t)(m%60)); screen_print("m ");
+    screen_print_int((int32_t)(s%60)); screen_print("s (");
     screen_print_int((int32_t)t); screen_println(" tick)");
 }
 
@@ -91,6 +91,55 @@ static void cmd_write(char *fn) {
         screen_print("Yazildi: ");screen_print(fn);
         screen_print(" (");screen_print_int(tot);screen_println("B)");
     }
+}
+
+static void print_hex2(uint8_t b) {
+    const char *h = "0123456789ABCDEF";
+    char s[3]; s[0]=h[b>>4]; s[1]=h[b&0xF]; s[2]=0;
+    screen_print(s);
+}
+
+static void cmd_cp(char **av, int ac) {
+    if(ac<3){screen_println("Kullanim: cp <kaynak> <hedef>");return;}
+    static char cb[8192];
+    int n=fs_read(av[1],cb,sizeof(cb));
+    if(n<0){screen_println("Kaynak bulunamadi!");return;}
+    if(fs_write(av[2],cb,(uint32_t)n)>=0){
+        screen_print("Kopyalandi: ");screen_print(av[1]);
+        screen_print(" -> ");screen_println(av[2]);
+    } else screen_println("Yazma hatasi!");
+}
+
+static void cmd_mv(char **av, int ac) {
+    if(ac<3){screen_println("Kullanim: mv <kaynak> <hedef>");return;}
+    static char mb[8192];
+    int n=fs_read(av[1],mb,sizeof(mb));
+    if(n<0){screen_println("Kaynak bulunamadi!");return;}
+    if(fs_write(av[2],mb,(uint32_t)n)<0){screen_println("Yazma hatasi!");return;}
+    fs_delete(av[1]);
+    screen_print("Tasindi: ");screen_print(av[1]);
+    screen_print(" -> ");screen_println(av[2]);
+}
+
+static void cmd_hexdump(char *fn) {
+    if(!fn){screen_println("Kullanim: hexdump <dosya>");return;}
+    static char hb[8192];
+    int n=fs_read(fn,hb,sizeof(hb));
+    if(n<0){screen_println("Dosya bulunamadi!");return;}
+    for(int off=0; off<n; off+=16){
+        screen_print_hex((uint32_t)off); screen_print(": ");
+        for(int i=0;i<16;i++){
+            if(off+i<n){ print_hex2((uint8_t)hb[off+i]); screen_putchar(' '); }
+            else screen_print("   ");
+        }
+        screen_print(" ");
+        for(int i=0;i<16 && off+i<n;i++){
+            char c=hb[off+i];
+            screen_putchar((c>=32 && c<127)?c:'.');
+        }
+        screen_putchar('\n');
+    }
+    screen_print("Toplam: "); screen_print_int(n); screen_println(" byte");
 }
 
 static void cmd_diskread(uint32_t lba) {
@@ -239,6 +288,9 @@ void shell_run(void) {
             if(!fs_delete(argv[1])){screen_print("Silindi: ");screen_println(argv[1]);}
             else screen_println("Bulunamadi!");
         }
+        else if(!kstrcmp(argv[0],"cp"))      cmd_cp(argv,argc);
+        else if(!kstrcmp(argv[0],"mv"))      cmd_mv(argv,argc);
+        else if(!kstrcmp(argv[0],"hexdump")) cmd_hexdump(argc>=2?argv[1]:0);
         else if(!kstrcmp(argv[0],"echo")){
             for(int i=1;i<argc;i++){if(i>1)screen_putchar(' ');screen_print(argv[i]);}
             screen_putchar('\n');

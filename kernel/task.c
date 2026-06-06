@@ -2,6 +2,7 @@
 #include "../include/memory.h"
 #include "../include/screen.h"
 #include "../include/paging.h"
+#include "../include/critical.h"
 
 static task_t   tasks[MAX_TASKS];
 static task_t  *current_task    = 0;
@@ -112,9 +113,12 @@ task_t *task_create(const char *name, void (*entry)(void), uint8_t priority) {
     t->context.esp = (uint32_t)sp;
     t->page_dir    = 0;
 
-    /* Döngüsel listeye ekle */
+    /* Döngüsel listeye ekle — timer IRQ ring'i yarıda görmesin diye
+     * pointer cerrahisini kritik bölgede yap. */
+    uint32_t f = irq_save();
     t->next = current_task->next;
     current_task->next = t;
+    irq_restore(f);
 
     screen_print("[TASK] Yeni gorev: ");
     screen_print(t->name);
@@ -150,18 +154,21 @@ static void task_reap(void) {
         task_t *z = &tasks[i];
         if (z->state != TASK_ZOMBIE || z == current_task) continue;
 
-        /* Ring'den çıkar: z'nin öncülünü bul */
+        /* Ring'den çıkar: z'nin öncülünü bul ve bağlantıyı kritik
+         * bölgede kopar (timer IRQ'su ring'i yarıda görmesin). */
+        uint32_t f = irq_save();
         task_t *p = z->next;
         while (p && p->next != z) p = p->next;
         if (p) p->next = z->next;
+        z->state = TASK_DEAD;
+        z->next  = 0;
+        irq_restore(f);
 
         /* Stack belleğini serbest bırak (kernel_stack = stack tepesi) */
         if (z->kernel_stack) {
             kfree((void *)(z->kernel_stack - TASK_STACK_SIZE));
             z->kernel_stack = 0;
         }
-        z->state = TASK_DEAD;
-        z->next  = 0;
     }
 }
 
