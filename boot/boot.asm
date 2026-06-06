@@ -89,6 +89,17 @@ enter_protected_mode:
     mov si, msg_pmode
     call print_string
 
+    ; A20 hattını aç (Fast A20, port 0x92).
+    ; Olmadan adres biti 20 sıfırlanır ve 1MB üstü erişimler düşük
+    ; belleğe sarar (gerçek donanımda bozulma/hang; QEMU varsayılan açar).
+    in al, 0x92
+    test al, 2
+    jnz .a20_done       ; zaten açıksa dokunma
+    or al, 2            ; A20 bitini set et
+    and al, 0xFE        ; bit0 (fast reset) sıfır kalsın
+    out 0x92, al
+.a20_done:
+
     cli
     lgdt [gdt_descriptor]
 

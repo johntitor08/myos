@@ -11,6 +11,8 @@ static int      multitasking_on = 0;
 
 #define QUANTUM_BASE 5
 
+static void task_reap(void);   /* aşağıda tanımlı; çıkış yapan görevleri toplar */
+
 static void kstrcpy(char *d, const char *s, int n) {
     int i = 0;
     while (s[i] && i < n-1) { d[i] = s[i]; i++; }
@@ -60,6 +62,10 @@ void task_start_multitasking(void) {
  * context_switch: pop edi, pop esi, pop ebx, pop ebp, ret
  * ============================================================ */
 task_t *task_create(const char *name, void (*entry)(void), uint8_t priority) {
+    /* Önce biten görevleri topla: slot ve stack belleğini geri kazan
+     * (kooperatif bağlam — heap'i güvenle değiştirebiliriz). */
+    task_reap();
+
     /* Boş slot bul */
     task_t *t = 0;
     for (int i = 1; i < MAX_TASKS; i++) {
@@ -131,6 +137,35 @@ static task_t *scheduler_next(void) {
 }
 
 /* ============================================================
+ * Zombi görevleri topla: stack'lerini serbest bırak, ring'den çıkar,
+ * slot'u DEAD yapıp yeniden kullanılabilir hale getir.
+ *
+ * current_task ASLA toplanmaz: çıkış yapan görev önce ZOMBIE olur, sonra
+ * task_yield çağırır; o anda hâlâ kendi stack'i üzerindeyiz. Bu yüzden
+ * toplama bir sonraki zamanlama turuna ertelenir (görev artık current
+ * değilken stack'i güvenle serbest bırakılır).
+ * ============================================================ */
+static void task_reap(void) {
+    for (int i = 1; i < MAX_TASKS; i++) {
+        task_t *z = &tasks[i];
+        if (z->state != TASK_ZOMBIE || z == current_task) continue;
+
+        /* Ring'den çıkar: z'nin öncülünü bul */
+        task_t *p = z->next;
+        while (p && p->next != z) p = p->next;
+        if (p) p->next = z->next;
+
+        /* Stack belleğini serbest bırak (kernel_stack = stack tepesi) */
+        if (z->kernel_stack) {
+            kfree((void *)(z->kernel_stack - TASK_STACK_SIZE));
+            z->kernel_stack = 0;
+        }
+        z->state = TASK_DEAD;
+        z->next  = 0;
+    }
+}
+
+/* ============================================================
  * task_yield — gönüllü CPU bırakma
  * ============================================================ */
 void task_yield(void) {
@@ -185,6 +220,7 @@ void task_sleep(uint32_t ms) {
  * ============================================================ */
 void task_exit(void) {
     if (!current_task || current_task->pid == 0) return;
+    task_reap();   /* önceki zombileri topla (current hariç) */
     current_task->state = TASK_ZOMBIE;
     screen_print("[TASK] Bitti: "); screen_println(current_task->name);
     task_yield();

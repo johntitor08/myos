@@ -13,6 +13,13 @@
 /* Program header tipleri */
 #define PT_LOAD     1
 
+/* Yükleme güvenlik sınırları (saldırgan kontrollü ELF alanlarına karşı).
+ * İzinli yükleme penceresi: heap'in (1-5MB) üstü, user stack'in (8MB) altı.
+ * Bu pencere paging identity-map alanı (0-32MB) içindedir. */
+#define ELF_MAX_PHDRS   64
+#define ELF_LOAD_MIN    0x500000   /* 5MB  */
+#define ELF_LOAD_MAX    0x800000   /* 8MB  */
+
 /* ELF32 File Header */
 typedef struct __attribute__((packed)) {
     uint32_t magic;

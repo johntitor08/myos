@@ -47,7 +47,11 @@ void idt_set_gate(uint8_t num, uint32_t base, uint16_t sel, uint8_t flags) {
     idt[num].base_high = (base >> 16) & 0xFFFF;
     idt[num].selector  = sel;
     idt[num].zero      = 0;
-    idt[num].flags     = flags | 0x60;
+    /* flags'i oldugu gibi kullan: DPL caller tarafindan belirlenir.
+     * (Onceden | 0x60 ile tum gate'ler DPL=3 oluyordu; bu ring-3'un
+     *  her exception/IRQ vektorunu 'int' ile cagirmasina izin veriyordu.
+     *  Yalnizca syscall gate'i (0x80) 0xEE = DPL3 ile kurulur.) */
+    idt[num].flags     = flags;
 }
 
 /* ============================================================

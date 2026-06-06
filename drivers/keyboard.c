@@ -2,12 +2,14 @@
 #include "../include/idt.h"
 #include "../include/screen.h"
 
-/* Klavye tamponu */
+/* Klavye tamponu — IRQ1 handler ile tüketici arasında paylaşılır,
+ * bu yüzden volatile (derleyici tüketicinin spin döngüsündeki
+ * kb_count okumasını döngü dışına taşımasın diye). */
 #define KB_BUFFER_SIZE 256
-static char kb_buffer[KB_BUFFER_SIZE];
-static int  kb_read  = 0;
-static int  kb_write = 0;
-static int  kb_count = 0;
+static volatile char kb_buffer[KB_BUFFER_SIZE];
+static volatile int  kb_read  = 0;
+static volatile int  kb_write = 0;
+static volatile int  kb_count = 0;
 
 /* Shift durumu */
 static int shift_pressed = 0;
@@ -105,9 +107,13 @@ char keyboard_getchar(void) {
     while (kb_count == 0) {
         __asm__ volatile ("hlt");
     }
+    /* IRQ1 ile yarışı önle: kb_count-- ve dequeue atomik olmalı
+     * (interrupt handler kb_count++ yapar). */
+    __asm__ volatile ("cli");
     char c = kb_buffer[kb_read];
     kb_read = (kb_read + 1) % KB_BUFFER_SIZE;
     kb_count--;
+    __asm__ volatile ("sti");
     return c;
 }
 
