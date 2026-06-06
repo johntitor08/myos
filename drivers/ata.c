@@ -111,8 +111,10 @@ int ata_read_sectors(uint32_t lba, uint8_t count, void *buf) {
     outb(ATA_PRIMARY_LBA_HI, (uint8_t)(lba >> 16));
     outb(ATA_PRIMARY_CMD,    ATA_CMD_READ_PIO);
 
+    /* ATA: count=0 register'da 256 sektör demektir */
+    int sectors = count ? count : 256;
     uint16_t *ptr = (uint16_t *)buf;
-    for (int s = 0; s < count; s++) {
+    for (int s = 0; s < sectors; s++) {
         if (ata_wait_drq() != 0) return -1;
         for (int i = 0; i < 256; i++)
             ptr[s * 256 + i] = inw(ATA_PRIMARY_DATA);
@@ -135,8 +137,10 @@ int ata_write_sectors(uint32_t lba, uint8_t count, const void *buf) {
     outb(ATA_PRIMARY_LBA_HI, (uint8_t)(lba >> 16));
     outb(ATA_PRIMARY_CMD,    ATA_CMD_WRITE_PIO);
 
+    /* ATA: count=0 register'da 256 sektör demektir */
+    int sectors = count ? count : 256;
     const uint16_t *ptr = (const uint16_t *)buf;
-    for (int s = 0; s < count; s++) {
+    for (int s = 0; s < sectors; s++) {
         if (ata_wait_drq() != 0) return -1;
         for (int i = 0; i < 256; i++)
             outw(ATA_PRIMARY_DATA, ptr[s * 256 + i]);

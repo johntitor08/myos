@@ -232,7 +232,7 @@ void shell_run(void) {
             if(argc<2){screen_println("Kullanim: cat <dosya>");continue;}
             static char fb[4096]; int n=fs_read(argv[1],fb,4095);
             if(n<0)screen_println("Dosya bulunamadi!");
-            else{fb[n]=0;screen_print(fb);if(fb[n-1]!='\n')screen_putchar('\n');}
+            else{fb[n]=0;screen_print(fb);if(n>0&&fb[n-1]!='\n')screen_putchar('\n');}
         }
         else if(!kstrcmp(argv[0],"del")){
             if(argc<2){screen_println("Kullanim: del <dosya>");continue;}

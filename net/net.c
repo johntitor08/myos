@@ -259,13 +259,18 @@ void net_receive(void) {
     while (!(inb(io + RTL_CMD) & 0x01)) {  /* RX buffer boş değil */
         uint16_t *hdr = (uint16_t *)(rx_buffer + rx_offset);
         /* hdr[0] = status, hdr[1] = length */
+        uint16_t status  = hdr[0];
         uint16_t pkt_len = hdr[1];
+        if (!(status & 0x01)) break;          /* ROK yok: geçerli paket değil */
         if (pkt_len < 4 || pkt_len > 1520) break;
 
         uint8_t *pkt = (uint8_t *)(rx_buffer + rx_offset + 4);
         eth_header_t *eth = (eth_header_t *)pkt;
 
-        if (net_htons(eth->type) == ETH_TYPE_IP) {
+        /* Başlık alanlarını okumadan önce pkt_len'in onları kapsadığını
+         * doğrula (kısa/runt çerçeveler tampondan taşma okumasına yol açar). */
+        if (pkt_len >= ETH_HDR_LEN && net_htons(eth->type) == ETH_TYPE_IP &&
+            pkt_len >= ETH_HDR_LEN + sizeof(ip_header_t)) {
             ip_header_t *ip = (ip_header_t *)(pkt + ETH_HDR_LEN);
             if (ip->protocol == IP_PROTO_ICMP) {
                 /* ICMP echo reply için basit log */
