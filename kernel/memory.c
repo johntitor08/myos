@@ -111,8 +111,11 @@ void *kmalloc(size_t size) {
  * kcalloc - sıfırlanmış bellek ayır
  * ============================================================ */
 void *kcalloc(size_t count, size_t size) {
-    void *ptr = kmalloc(count * size);
-    if (ptr) memset(ptr, 0, count * size);
+    /* count * size taşmasını engelle (CWE-190) */
+    if (size != 0 && count > ((size_t)-1) / size) return NULL;
+    size_t total = count * size;
+    void *ptr = kmalloc(total);
+    if (ptr) memset(ptr, 0, total);
     return ptr;
 }
 

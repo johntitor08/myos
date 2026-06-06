@@ -31,6 +31,22 @@ int elf_load(const uint8_t *data, uint32_t size, elf_program_t *out) {
     screen_print(" Segments: "); screen_print_int(hdr->ph_count);
     screen_putchar('\n');
 
+    /* Program header tablosu dosya içinde mi? (taşma korumalı kontroller)
+     * Tüm offset/boyut alanları saldırgan kontrolündedir; her birini
+     * 'size' tamponuna ve izinli yükleme penceresine göre doğrula. */
+    if (hdr->ph_entry_size < sizeof(elf32_phdr_t)) {
+        screen_println("[ELF] Gecersiz ph_entry_size!"); return -1;
+    }
+    if (hdr->ph_count > ELF_MAX_PHDRS) {
+        screen_println("[ELF] Cok fazla program header!"); return -1;
+    }
+    /* ph_offset + ph_count*ph_entry_size <= size, taşmasız */
+    uint32_t ph_table_bytes = (uint32_t)hdr->ph_count * hdr->ph_entry_size;
+    if (ph_table_bytes / hdr->ph_entry_size != hdr->ph_count ||      /* çarpım taşması */
+        hdr->ph_offset > size || ph_table_bytes > size - hdr->ph_offset) {
+        screen_println("[ELF] Program header tablosu dosya disinda!"); return -1;
+    }
+
     /* Program header'ları işle */
     for (int i = 0; i < hdr->ph_count; i++) {
         const elf32_phdr_t *ph = (const elf32_phdr_t *)
@@ -42,6 +58,21 @@ int elf_load(const uint8_t *data, uint32_t size, elf_program_t *out) {
         screen_print_hex(ph->vaddr);
         screen_print(" size="); screen_print_int((int32_t)ph->mem_size);
         screen_putchar('\n');
+
+        /* Kaynak aralığı dosya içinde mi? offset + file_size <= size (taşmasız) */
+        if (ph->offset > size || ph->file_size > size - ph->offset) {
+            screen_println("[ELF] Segment kaynagi dosya disinda!"); return -1;
+        }
+        /* file_size, mem_size'i asamaz */
+        if (ph->file_size > ph->mem_size) {
+            screen_println("[ELF] file_size > mem_size!"); return -1;
+        }
+        /* Hedef [vaddr, vaddr+mem_size) izinli yükleme penceresinde mi?
+         * (taşmasız) Kernel/IDT/page-table gibi adreslere yazmayı engeller. */
+        if (ph->vaddr < ELF_LOAD_MIN || ph->vaddr >= ELF_LOAD_MAX ||
+            ph->mem_size > ELF_LOAD_MAX - ph->vaddr) {
+            screen_println("[ELF] Segment hedefi izinli aralik disinda!"); return -1;
+        }
 
         /* Hedef belleği sıfırla (BSS için) */
         memset((void *)ph->vaddr, 0, ph->mem_size);

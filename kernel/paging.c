@@ -12,6 +12,18 @@
 #define PMM_FRAME_COUNT     (PMM_MEMORY_SIZE / PAGE_SIZE)
 #define PMM_BITMAP_SIZE     (PMM_FRAME_COUNT / 32)
 
+/* Düşük bellek yerleşimi (hepsi identity-map'lenir, çakışmasız):
+ *   0   - 1MB : low memory + kernel imajı
+ *   1   - 5MB : kernel heap (memory.h: HEAP_START/HEAP_SIZE)
+ *   5   - 8MB : ELF kullanıcı yükleme penceresi (elf.h)
+ *   8   - 9MB : kullanıcı stack bölgesi
+ *   9MB+      : PMM serbest frame havuzu
+ * PMM ilk 9MB'ı "dolu" işaretler; böylece heap/ELF/stack ile çakışan
+ * frame DAĞITMAZ. Tüm bu bölge + PMM havuzunun başı 32MB identity-map
+ * içinde kaldığından, paging açıldıktan sonra erişim page-fault üretmez. */
+#define PMM_RESERVED_BYTES   (9  * 1024 * 1024)    /* 0-9MB rezerve */
+#define IDENTITY_MAP_BYTES   (32 * 1024 * 1024)    /* 0-32MB map */
+
 static uint32_t pmm_bitmap[PMM_BITMAP_SIZE];
 static uint32_t pmm_used_frames = 0;
 
@@ -63,11 +75,12 @@ static void pmm_init(void) {
     /* Tümünü boş işaretle */
     memset(pmm_bitmap, 0, sizeof(pmm_bitmap));
 
-    /* İlk 4MB'ı dolu işaretle (kernel + low memory) */
-    for (uint32_t i = 0; i < (4 * 1024 * 1024) / PAGE_SIZE; i++) {
+    /* İlk 9MB'ı dolu işaretle: low memory + kernel + heap + ELF/stack.
+     * Bu, PMM'in heap ile çakışan frame dağıtmasını engeller. */
+    for (uint32_t i = 0; i < PMM_RESERVED_BYTES / PAGE_SIZE; i++) {
         bitmap_set(i);
     }
-    pmm_used_frames = (4 * 1024 * 1024) / PAGE_SIZE;
+    pmm_used_frames = PMM_RESERVED_BYTES / PAGE_SIZE;
 
     screen_print("[PMM] Toplam: ");
     screen_print_int(PMM_FRAME_COUNT);
@@ -100,6 +113,10 @@ void paging_map(page_directory_t *dir, uint32_t virt, uint32_t phys, uint32_t fl
     /* Page table yoksa oluştur */
     if (!(dir->entries[pd_idx] & PAGE_PRESENT)) {
         uint32_t pt_phys = pmm_alloc_frame();
+        if (!pt_phys) {   /* Fiziksel bellek bitti: NULL page-table'a yazma */
+            screen_println("[PAGING] Page table icin frame yok!");
+            return;
+        }
         dir->entries[pd_idx] = pt_phys | PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER;
     }
 
@@ -152,7 +169,7 @@ void paging_switch(page_directory_t *dir) {
  * Identity mapping: virt == phys (0 → 4MB)
  * ============================================================ */
 static void identity_map_kernel(page_directory_t *dir) {
-    for (uint32_t addr = 0; addr < 4 * 1024 * 1024; addr += PAGE_SIZE) {
+    for (uint32_t addr = 0; addr < IDENTITY_MAP_BYTES; addr += PAGE_SIZE) {
         paging_map(dir, addr, addr, PAGE_PRESENT | PAGE_WRITABLE);
     }
 }
@@ -181,7 +198,7 @@ void paging_init(void) {
     cr0 |= 0x80000000;
     __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0) : "memory");
 
-    screen_println("[PAGING] Sanal bellek aktif! Identity map: 0-4MB");
+    screen_println("[PAGING] Sanal bellek aktif! Identity map: 0-32MB");
 }
 
 /* ============================================================

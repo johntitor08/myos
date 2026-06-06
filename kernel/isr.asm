@@ -170,7 +170,10 @@ isr128:
     mov gs, ax
     push esp
     call syscall_dispatch
-    mov [esp + 28], eax     ; EAX'a dönüş değerini yaz
+    ; Dönüş değerini saklanan EAX slotuna yaz.
+    ; Stack: [esp+0]=ptr arg, +4=ds, +8..+36 = pusha (edi..eax),
+    ; yani saklanan EAX [esp+36]'dadır ([esp+28] EDX idi -> hataliydi).
+    mov [esp + 36], eax
     pop eax
     pop eax
     mov ds, ax

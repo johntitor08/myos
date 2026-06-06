@@ -132,6 +132,12 @@ static void gui_demo_task(void) {
     window_t *w2 = gui_create_window("Terminal", 120, 20, 100, 60);
     window_t *w3 = gui_create_window("Hesap Makinesi", 50, 110, 90, 60);
 
+    /* Pencere oluşturulamazsa (limit doldu) NULL deref'ten kaçın */
+    if (!w1 || !w2 || !w3) {
+        screen_println("[GUI] Pencere olusturulamadi.");
+        return;
+    }
+
     gui_draw_window(w1);
     gui_draw_window(w2);
     gui_draw_window(w3);

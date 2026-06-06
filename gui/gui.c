@@ -20,6 +20,10 @@
 /* 32-bit çift buffer (off-screen) */
 static uint32_t backbuffer[GUI_WIDTH * GUI_HEIGHT];
 
+/* Pencere tablosu (gui_init bunları sıfırladığı için burada tanımlı) */
+static window_t windows[MAX_WINDOWS];
+static int      win_count = 0;
+
 /* VGA 256-renk paleti (basit 6-bit RGB dönüşümü) */
 static inline void outb(uint16_t p, uint8_t v) { __asm__ volatile("outb %0,%1"::"a"(v),"Nd"(p)); }
 static inline uint8_t inb(uint16_t p) { uint8_t v; __asm__ volatile("inb %1,%0":"=a"(v):"Nd"(p)); return v; }
@@ -159,6 +163,8 @@ static const uint8_t font5x7[][5] = {
 void gui_init(void) {
     vga_mode13_init();
     memset(backbuffer, 0, sizeof(backbuffer));
+    win_count = 0;   /* her oturumda pencereleri sıfırla (aksi halde
+                        tekrarlanan 'gui' MAX_WINDOWS'u doldurup NULL döndürür) */
     screen_println("[GUI] VGA Mode 13h hazir. 320x200x8 (palette)");
 }
 
@@ -277,9 +283,6 @@ void gui_render(void) {
 /* ============================================================
  * Pencere oluştur
  * ============================================================ */
-static window_t windows[MAX_WINDOWS];
-static int win_count = 0;
-
 window_t *gui_create_window(const char *title, int x, int y, int w, int h) {
     if (win_count >= MAX_WINDOWS) return 0;
     window_t *win = &windows[win_count++];
@@ -295,7 +298,7 @@ window_t *gui_create_window(const char *title, int x, int y, int w, int h) {
 }
 
 void gui_draw_window(window_t *win) {
-    if (!win->visible) return;
+    if (!win || !win->visible) return;
     /* Gölge */
     gui_fill_rect(win->x+2, win->y+2, win->w, win->h, GUI_DARK_GREY);
     /* Arkaplan */
