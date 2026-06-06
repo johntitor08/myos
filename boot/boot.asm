@@ -49,7 +49,11 @@ load_kernel:
     push cx
 
     mov ah, 0x02        ; BIOS read sectors
-    mov al, 50          ; 50 sektör oku (25KB, kernel için yeterli)
+    ; 128 sektör = 64KB oku. Yükleme adresi 0x10000 (64KB hizalı), bu yüzden
+    ; tek transfer [0x10000,0x20000) penceresinde kalır ve floppy DMA'nın
+    ; 64KB sınırını AŞMAZ. NOT: kernel.bin 64KB'yi geçerse bu tek-okuma
+    ; yetersiz kalır; o durumda chunk'lı yükleyici döngüsü gerekir.
+    mov al, 128         ; 128 sektör (64KB)
     mov ch, 0           ; Silindir 0
     mov cl, 2           ; Sektör 2'den başla
     mov dh, 0           ; Kafa 0
