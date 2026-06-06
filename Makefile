@@ -14,17 +14,20 @@ CFLAGS    = -m32 -ffreestanding -fno-stack-protector -fno-pic \
 LDFLAGS   = -m elf_i386 -T kernel/linker.ld --oformat binary
 
 # Kaynak dosyaları
-ASM_SRCS  = kernel/kernel_entry.asm kernel/isr.asm
-C_SRCS    = kernel/kernel.c kernel/idt.c kernel/memory.c \
-            drivers/screen.c drivers/keyboard.c \
-            fs/fs.c shell/shell.c
+# ÖNEMLI: kernel_entry.asm ilk sırada olmalı; flat binary'de _start
+# (call kernel_main) 0x10000'e gelmeli çünkü bootloader oraya atlar.
+ASM_SRCS  = kernel/kernel_entry.asm kernel/isr.asm kernel/switch.asm
+C_SRCS    = kernel/kernel.c kernel/idt.c kernel/memory.c kernel/paging.c \
+            kernel/elf.c kernel/syscall.c kernel/task.c \
+            drivers/screen.c drivers/keyboard.c drivers/timer.c drivers/ata.c \
+            fs/fs.c shell/shell.c net/net.c gui/gui.c
 
 # Object dosyaları
 ASM_OBJS  = $(ASM_SRCS:.asm=.o)
 C_OBJS    = $(C_SRCS:.c=.o)
 
 # Hedefler
-.PHONY: all clean run
+.PHONY: all clean run debug
 
 all: myos.img
 
@@ -41,8 +44,11 @@ boot/boot.bin: boot/boot.asm
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Kernel binary
+# $^ prereq sırasını korur: önce ASM_OBJS (kernel_entry.o ilk), sonra C_OBJS.
 kernel.bin: $(ASM_OBJS) $(C_OBJS)
 	$(LD) $(LDFLAGS) -o $@ $^
+	@echo "kernel.bin boyutu:"
+	@ls -l kernel.bin | awk '{print $$5 " byte (" int(($$5+511)/512) " sektor)"}'
 
 # Disk imajı oluştur (bootloader + kernel)
 myos.img: boot/boot.bin kernel.bin
