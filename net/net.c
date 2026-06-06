@@ -1,0 +1,282 @@
+#include "../include/net.h"
+#include "../include/screen.h"
+#include "../include/memory.h"
+
+/* ============================================================
+ * MyOS Ağ Stack'i
+ * - RTL8139 PCI ağ kartı sürücüsü (QEMU destekler)
+ * - Ethernet II çerçeveleme
+ * - IPv4 + ICMP + UDP
+ * ============================================================ */
+
+static net_state_t net = {0};
+
+/* Port I/O */
+static inline void outb(uint16_t p, uint8_t v)   { __asm__ volatile("outb %0,%1"::"a"(v),"Nd"(p)); }
+static inline void outw(uint16_t p, uint16_t v)  { __asm__ volatile("outw %0,%1"::"a"(v),"Nd"(p)); }
+static inline void outl(uint16_t p, uint32_t v)  { __asm__ volatile("outl %0,%1"::"a"(v),"Nd"(p)); }
+static inline uint8_t  inb(uint16_t p) { uint8_t  v; __asm__ volatile("inb %1,%0":"=a"(v):"Nd"(p)); return v; }
+static inline uint16_t inw(uint16_t p) { uint16_t v; __asm__ volatile("inw %1,%0":"=a"(v):"Nd"(p)); return v; }
+static inline uint32_t inl(uint16_t p) { uint32_t v; __asm__ volatile("inl %1,%0":"=a"(v):"Nd"(p)); return v; }
+
+/* RTL8139 register offset'leri */
+#define RTL_MAC0        0x00
+#define RTL_MAR0        0x08
+#define RTL_TSD0        0x10   /* Tx status */
+#define RTL_TSAD0       0x20   /* Tx start addr */
+#define RTL_RBSTART     0x30   /* Rx buffer start */
+#define RTL_CMD         0x37
+#define RTL_CAPR        0x38   /* Current addr of packet read */
+#define RTL_CBR         0x3A   /* Current buffer address */
+#define RTL_IMR         0x3C   /* Interrupt mask */
+#define RTL_ISR         0x3E   /* Interrupt status */
+#define RTL_TCR         0x40   /* Tx config */
+#define RTL_RCR         0x44   /* Rx config */
+#define RTL_CONFIG1     0x52
+
+#define RTL_CMD_RX_EN   0x08
+#define RTL_CMD_TX_EN   0x04
+#define RTL_CMD_RST     0x10
+
+/* TX/RX buffer */
+#define RX_BUF_SIZE     (8192 + 16 + 1500)
+#define TX_BUF_COUNT    4
+
+static uint8_t *rx_buffer = 0;
+static uint8_t *tx_buffers[TX_BUF_COUNT];
+static uint8_t  tx_current = 0;
+static uint16_t rx_offset  = 0;
+
+/* ============================================================
+ * PCI: RTL8139 bul (basit brute-force tarama)
+ * ============================================================ */
+static inline void pci_write(uint8_t bus, uint8_t slot, uint8_t func,
+                              uint8_t off, uint32_t val) {
+    uint32_t addr = 0x80000000 | ((uint32_t)bus<<16) | ((uint32_t)slot<<11)
+                  | ((uint32_t)func<<8) | (off & 0xFC);
+    outl(0xCF8, addr);
+    outl(0xCFC, val);
+}
+
+static inline uint32_t pci_read(uint8_t bus, uint8_t slot, uint8_t func, uint8_t off) {
+    uint32_t addr = 0x80000000 | ((uint32_t)bus<<16) | ((uint32_t)slot<<11)
+                  | ((uint32_t)func<<8) | (off & 0xFC);
+    outl(0xCF8, addr);
+    return inl(0xCFC);
+}
+
+static uint32_t pci_find_rtl8139(void) {
+    for (uint16_t bus = 0; bus < 256; bus++) {
+        for (uint8_t slot = 0; slot < 32; slot++) {
+            uint32_t id = pci_read((uint8_t)bus, slot, 0, 0);
+            uint16_t vendor = id & 0xFFFF;
+            uint16_t device = id >> 16;
+            if (vendor == RTL8139_VENDOR && device == RTL8139_DEVICE) {
+                /* BAR0: I/O space base */
+                uint32_t bar0 = pci_read((uint8_t)bus, slot, 0, 0x10);
+                /* PCI bus master etkinleştir */
+                uint32_t cmd = pci_read((uint8_t)bus, slot, 0, 0x04);
+                cmd |= 0x05;
+                pci_write((uint8_t)bus, slot, 0, 0x04, cmd);
+                return bar0 & ~0x3;  /* I/O base addr */
+            }
+        }
+    }
+    return 0;
+}
+
+/* ============================================================
+ * Ağı başlat
+ * ============================================================ */
+int net_init(void) {
+    uint32_t io = pci_find_rtl8139();
+    if (!io) {
+        screen_println("[NET] RTL8139 bulunamadi. QEMU: -nic rtl8139 ekleyin.");
+        net.available = 0;
+        return -1;
+    }
+
+    net.io_base   = io;
+    net.available = 1;
+
+    /* Power on */
+    outb(io + RTL_CONFIG1, 0x00);
+
+    /* Reset */
+    outb(io + RTL_CMD, RTL_CMD_RST);
+    uint32_t timeout = 100000;
+    while ((inb(io + RTL_CMD) & RTL_CMD_RST) && timeout--);
+
+    /* MAC adresini oku */
+    for (int i = 0; i < 6; i++)
+        net.mac.bytes[i] = inb(io + RTL_MAC0 + i);
+
+    /* IP konfigürasyonu (sabit - DHCP yok) */
+    net.ip      = (10)  | (0 << 8)   | (2 << 16)  | (15 << 24);
+    net.gateway = (10)  | (0 << 8)   | (2 << 16)  | (2  << 24);
+    net.netmask = (255) | (255 << 8) | (255 << 16) | (0  << 24);
+
+    /* RX buffer */
+    rx_buffer = (uint8_t *)kmalloc(RX_BUF_SIZE);
+    if (!rx_buffer) { screen_println("[NET] RX buffer yok!"); return -1; }
+    memset(rx_buffer, 0, RX_BUF_SIZE);
+
+    /* TX buffer'ları */
+    for (int i = 0; i < TX_BUF_COUNT; i++) {
+        tx_buffers[i] = (uint8_t *)kmalloc(1536);
+        memset(tx_buffers[i], 0, 1536);
+    }
+
+    /* RX buffer adresini RTL'ye ver */
+    outl(io + RTL_RBSTART, (uint32_t)rx_buffer);
+
+    /* IMR: TX OK + RX OK */
+    outw(io + RTL_IMR, 0x0005);
+
+    /* RCR: Accept All + wrap */
+    outl(io + RTL_RCR, 0xF | (1 << 7));
+
+    /* TX + RX etkinleştir */
+    outb(io + RTL_CMD, RTL_CMD_RX_EN | RTL_CMD_TX_EN);
+
+    screen_print("[NET] RTL8139 hazir. IO="); screen_print_hex(io);
+    screen_print(" MAC=");
+    for (int i = 0; i < 6; i++) {
+        screen_print_hex(net.mac.bytes[i]);
+        if (i < 5) screen_putchar(':');
+    }
+    screen_putchar('\n');
+    return 0;
+}
+
+void net_print_info(void) {
+    if (!net.available) { screen_println("[NET] Ag karti yok."); return; }
+    char ip_str[16];
+    ip_to_str(net.ip, ip_str);
+    screen_print("[NET] IP: "); screen_println(ip_str);
+    ip_to_str(net.gateway, ip_str);
+    screen_print("[NET] GW: "); screen_println(ip_str);
+}
+
+/* ============================================================
+ * Ham Ethernet çerçevesi gönder
+ * ============================================================ */
+int net_send_raw(const void *data, uint16_t len) {
+    if (!net.available) return -1;
+    uint32_t io = net.io_base;
+
+    memcpy(tx_buffers[tx_current], data, len);
+
+    outl(io + RTL_TSAD0 + tx_current * 4, (uint32_t)tx_buffers[tx_current]);
+    outl(io + RTL_TSD0  + tx_current * 4, len);
+
+    tx_current = (tx_current + 1) % TX_BUF_COUNT;
+    return 0;
+}
+
+/* ============================================================
+ * Yardımcılar
+ * ============================================================ */
+uint16_t net_htons(uint16_t v) { return ((v & 0xFF) << 8) | ((v >> 8) & 0xFF); }
+uint32_t net_htonl(uint32_t v) {
+    return ((v & 0xFF) << 24) | (((v >> 8) & 0xFF) << 16)
+         | (((v >> 16) & 0xFF) << 8) | ((v >> 24) & 0xFF);
+}
+
+uint16_t ip_checksum(const void *data, uint32_t len) {
+    const uint16_t *ptr = (const uint16_t *)data;
+    uint32_t sum = 0;
+    while (len > 1) { sum += *ptr++; len -= 2; }
+    if (len) sum += *(uint8_t *)ptr;
+    while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+    return (uint16_t)~sum;
+}
+
+void ip_to_str(ip_addr_t ip, char *buf) {
+    uint8_t *b = (uint8_t *)&ip;
+    /* basit itoa */
+    int pos = 0;
+    for (int i = 0; i < 4; i++) {
+        if (i) buf[pos++] = '.';
+        int n = b[i];
+        if (n >= 100) { buf[pos++] = '0' + n/100; n %= 100; }
+        if (n >= 10)  { buf[pos++] = '0' + n/10;  n %= 10;  }
+        buf[pos++] = '0' + n;
+    }
+    buf[pos] = '\0';
+}
+
+/* ============================================================
+ * UDP paketi gönder
+ * ============================================================ */
+int udp_send(ip_addr_t dst_ip, uint16_t src_port, uint16_t dst_port,
+             const void *data, uint16_t data_len) {
+    if (!net.available) return -1;
+
+    static uint8_t frame[ETH_FRAME_MAX];
+    memset(frame, 0, sizeof(frame));
+
+    eth_header_t *eth = (eth_header_t *)frame;
+    ip_header_t  *ip  = (ip_header_t  *)(frame + ETH_HDR_LEN);
+    udp_header_t *udp = (udp_header_t *)(frame + ETH_HDR_LEN + sizeof(ip_header_t));
+    uint8_t      *payload = frame + ETH_HDR_LEN + sizeof(ip_header_t) + sizeof(udp_header_t);
+
+    /* Ethernet header */
+    for (int i = 0; i < 6; i++) eth->dst.bytes[i] = 0xFF; /* broadcast */
+    eth->src  = net.mac;
+    eth->type = net_htons(ETH_TYPE_IP);
+
+    /* IP header */
+    ip->version_ihl = 0x45;
+    ip->ttl         = 64;
+    ip->protocol    = IP_PROTO_UDP;
+    ip->src         = net.ip;
+    ip->dst         = dst_ip;
+    uint16_t ip_len = sizeof(ip_header_t) + sizeof(udp_header_t) + data_len;
+    ip->total_len   = net_htons(ip_len);
+    ip->checksum    = ip_checksum(ip, sizeof(ip_header_t));
+
+    /* UDP header */
+    udp->src_port = net_htons(src_port);
+    udp->dst_port = net_htons(dst_port);
+    udp->length   = net_htons((uint16_t)(sizeof(udp_header_t) + data_len));
+    udp->checksum = 0;
+
+    /* Payload */
+    memcpy(payload, data, data_len);
+
+    uint16_t frame_len = (uint16_t)(ETH_HDR_LEN + ip_len);
+    return net_send_raw(frame, frame_len);
+}
+
+/* ============================================================
+ * RX: gelen paketleri işle
+ * ============================================================ */
+void net_receive(void) {
+    if (!net.available) return;
+    uint32_t io = net.io_base;
+
+    while (!(inb(io + RTL_CMD) & 0x01)) {  /* RX buffer boş değil */
+        uint16_t *hdr = (uint16_t *)(rx_buffer + rx_offset);
+        /* hdr[0] = status, hdr[1] = length */
+        uint16_t pkt_len = hdr[1];
+        if (pkt_len < 4 || pkt_len > 1520) break;
+
+        uint8_t *pkt = (uint8_t *)(rx_buffer + rx_offset + 4);
+        eth_header_t *eth = (eth_header_t *)pkt;
+
+        if (net_htons(eth->type) == ETH_TYPE_IP) {
+            ip_header_t *ip = (ip_header_t *)(pkt + ETH_HDR_LEN);
+            if (ip->protocol == IP_PROTO_ICMP) {
+                /* ICMP echo reply için basit log */
+                char src_str[16];
+                ip_to_str(ip->src, src_str);
+                screen_print("[NET] ICMP paketi alindi, kaynak: ");
+                screen_println(src_str);
+            }
+        }
+
+        rx_offset = (uint16_t)((rx_offset + pkt_len + 4 + 3) & ~3);
+        outw(io + RTL_CAPR, (uint16_t)(rx_offset - 16));
+    }
+}
