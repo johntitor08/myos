@@ -410,6 +410,7 @@ void net_receive(void) {
                     } else if (icmp->type == 0) {    /* echo reply -> ping komutu için kaydet */
                         g_ping_seq = net_htons(icmp->seq);
                         g_ping_got = 1;
+                        screen_print("[DBG] reply seq="); screen_print_int(g_ping_seq); screen_putchar('\n');
                     }
                 }
             }
