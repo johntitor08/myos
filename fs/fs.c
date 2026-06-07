@@ -1,6 +1,7 @@
 #include "../include/fs.h"
 #include "../include/memory.h"
 #include "../include/screen.h"
+#include "../include/kstring.h"
 #include <stdint.h>
 
 /* ============================================================
@@ -65,20 +66,7 @@ static int find_inode_by_name(const char *name) {
     return -1;
 }
 
-/* ============================================================
- * String kopyala (kernel kütüphanesiz)
- * ============================================================ */
-static void kstrcpy(char *dst, const char *src, int max) {
-    int i = 0;
-    while (src[i] && i < max - 1) { dst[i] = src[i]; i++; }
-    dst[i] = 0;
-}
-
-static int kstrlen(const char *s) {
-    int i = 0;
-    while (s[i]) i++;
-    return i;
-}
+/* String yardımcıları (kstrlen/kstrncpy) artık include/kstring.h'de. */
 
 /* ============================================================
  * Dosya sistemini başlat
@@ -91,7 +79,7 @@ void fs_init(void) {
     /* Kök dizini oluştur */
     inodes[0].in_use = 1;
     inodes[0].is_dir = 1;
-    kstrcpy(inodes[0].name, "/", MAX_FILENAME);
+    kstrncpy(inodes[0].name, "/", MAX_FILENAME);
 
     /* Örnek dosyalar oluştur */
     fs_write("readme.txt",
@@ -116,7 +104,7 @@ int fs_write(const char *name, const char *data, uint32_t size) {
     if (idx == -1) {
         idx = find_free_inode();
         if (idx == -1) { screen_println("[FS] Inode limiti doldu!"); return -1; }
-        kstrcpy(inodes[idx].name, name, MAX_FILENAME);
+        kstrncpy(inodes[idx].name, name, MAX_FILENAME);
         inodes[idx].in_use = 1;
         inodes[idx].is_dir = 0;
         inodes[idx].block_count = 0;

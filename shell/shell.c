@@ -10,19 +10,14 @@
 #include "../include/net.h"
 #include "../include/gui.h"
 #include "../include/elf.h"
+#include "../include/kstring.h"
 #include "stdint.h"
 
 #define CMD_MAX  256
 #define ARG_MAX  8
 
-static int kstrcmp(const char *a, const char *b) {
-    while (*a && *b && *a==*b){a++;b++;} return *a-*b;
-}
-static void kstrcpy(char *d, const char *s) { while((*d++=*s++)); }
-static int32_t katoi(const char *s) {
-    int32_t n=0,neg=1; if(*s=='-'){neg=-1;s++;}
-    while(*s>='0'&&*s<='9') n=n*10+(*s++-'0'); return n*neg;
-}
+/* kstrcmp/kstrncpy/katoi artık include/kstring.h'de. */
+
 static int parse_args(char *cmd, char *args[], int max) {
     int argc=0; char *p=cmd;
     while(*p&&argc<max){
@@ -84,7 +79,7 @@ static void cmd_write(char *fn) {
         screen_print("> ");
         int len=keyboard_readline(line,256);
         if(!len)break;
-        if(tot+len+1<4096){kstrcpy(buf+tot,line);tot+=len;buf[tot++]='\n';}
+        if(tot+len+1<4096){kstrncpy(buf+tot,line,4096-tot);tot+=len;buf[tot++]='\n';}
     }
     buf[tot]=0;
     if(fs_write(fn,buf,(uint32_t)tot)>=0){

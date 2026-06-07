@@ -3,6 +3,7 @@
 #include "../include/screen.h"
 #include "../include/paging.h"
 #include "../include/critical.h"
+#include "../include/kstring.h"
 
 static task_t   tasks[MAX_TASKS];
 static task_t  *current_task    = 0;
@@ -14,11 +15,7 @@ static int      multitasking_on = 0;
 
 static void task_reap(void);   /* aşağıda tanımlı; çıkış yapan görevleri toplar */
 
-static void kstrcpy(char *d, const char *s, int n) {
-    int i = 0;
-    while (s[i] && i < n-1) { d[i] = s[i]; i++; }
-    d[i] = 0;
-}
+/* String yardımcıları (kstrncpy) artık include/kstring.h'de. */
 
 /* Görev bitince buraya düşer */
 static void task_exit_wrapper(void) {
@@ -37,7 +34,7 @@ void task_init(void) {
     idle->state      = TASK_RUNNING;
     idle->priority   = PRIORITY_NORMAL;
     idle->time_slice = QUANTUM_BASE;
-    kstrcpy(idle->name, "shell", 32);
+    kstrncpy(idle->name, "shell", 32);
     idle->next = idle;
 
     current_task    = idle;
@@ -82,7 +79,7 @@ task_t *task_create(const char *name, void (*entry)(void), uint8_t priority) {
     t->state     = TASK_READY;
     t->priority  = priority ? priority : PRIORITY_NORMAL;
     t->time_slice = QUANTUM_BASE * t->priority;
-    kstrcpy(t->name, name, 32);
+    kstrncpy(t->name, name, 32);
 
     /* Stack belleği */
     uint8_t *stack_mem = (uint8_t *)kmalloc(TASK_STACK_SIZE);

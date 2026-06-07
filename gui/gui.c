@@ -274,17 +274,8 @@ void gui_draw_string(int x, int y, const char *s, uint32_t fg, uint32_t bg) {
  * Backbuffer → VGA memory
  * ============================================================ */
 void gui_render(void) {
-    for (int i = 0; i < GUI_WIDTH * GUI_HEIGHT; i++) {
-        uint32_t c = backbuffer[i];
-        uint8_t r = (c >> 16) & 0xFF;
-        uint8_t g = (c >>  8) & 0xFF;
-        uint8_t b =  c        & 0xFF;
-        /* Web palette index: r/51 * 36 + g/51 * 6 + b/51 */
-        uint8_t ri = r / 52; if (ri > 5) ri = 5;
-        uint8_t gi = g / 52; if (gi > 5) gi = 5;
-        uint8_t bi = b / 52; if (bi > 5) bi = 5;
-        FRAMEBUFFER[i] = (uint8_t)(ri * 36 + gi * 6 + bi);
-    }
+    /* Backbuffer artık doğrudan palette index'leri tutuyor: düz kopya. */
+    memcpy(FRAMEBUFFER, backbuffer, BUF_SIZE);
 }
 
 /* ============================================================
