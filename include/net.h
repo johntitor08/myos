@@ -92,6 +92,11 @@ uint16_t ip_checksum(const void *data, uint32_t len);
 int udp_send(ip_addr_t dst_ip, uint16_t src_port, uint16_t dst_port,
              const void *data, uint16_t len);
 
+/* ICMP ping: echo request gönder + yanıt yokla (net_poll RX'te doldurur) */
+void net_send_ping(ip_addr_t dst, uint16_t seq);
+void net_ping_clear(void);
+int  net_ping_check(uint16_t seq);
+
 /* IP'yi string'e çevir */
 void ip_to_str(ip_addr_t ip, char *buf);
 
