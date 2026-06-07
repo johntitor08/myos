@@ -179,6 +179,8 @@ static void cmd_ping(char **av, int ac) {
         net_send_ping(dst, seq);
         int got=0;
         for(int t=0;t<100;t++){            /* ~1s timeout (100 * 10ms) */
+            net_receive();                 /* RX'i kendimiz yokla (net_poll
+                                              task'inin zamanlamasına bağlı kalma) */
             if(net_ping_check(seq)){got=1;break;}
             task_sleep(10);
         }

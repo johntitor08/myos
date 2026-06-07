@@ -3,6 +3,7 @@
 #include "../include/memory.h"
 #include "../include/io.h"
 #include "../include/critical.h"
+#include "../include/critical.h"
 
 /* ============================================================
  * MyOS Ağ Stack'i
@@ -371,7 +372,17 @@ int  net_ping_check(uint16_t s) { return g_ping_got && g_ping_seq == s; }
  * RX: gelen paketleri işle
  * ============================================================ */
 void net_receive(void) {
+    static volatile int busy = 0;
     if (!net.available) return;
+
+    /* Reentrancy koruması: net_receive hem net_poll task'inden hem de
+     * cmd_ping'in bekleme döngüsünden çağrılabilir. Aynı anda iki çağrı
+     * RX ring'i (rx_offset/CAPR) bozardı; ikinci çağrı erken döner. */
+    uint32_t f = irq_save();
+    if (busy) { irq_restore(f); return; }
+    busy = 1;
+    irq_restore(f);
+
     uint32_t io = net.io_base;
 
     while (!(inb(io + RTL_CMD) & 0x01)) {  /* RX buffer boş değil */
@@ -410,7 +421,6 @@ void net_receive(void) {
                     } else if (icmp->type == 0) {    /* echo reply -> ping komutu için kaydet */
                         g_ping_seq = net_htons(icmp->seq);
                         g_ping_got = 1;
-                        screen_print("[DBG] reply seq="); screen_print_int(g_ping_seq); screen_putchar('\n');
                     }
                 }
             }
@@ -419,4 +429,6 @@ void net_receive(void) {
         rx_offset = (uint16_t)((rx_offset + pkt_len + 4 + 3) & ~3);
         outw(io + RTL_CAPR, (uint16_t)(rx_offset - 16));
     }
+
+    busy = 0;
 }
