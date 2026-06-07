@@ -2,6 +2,7 @@
 #include "../include/memory.h"
 #include "../include/screen.h"
 #include "../include/timer.h"
+#include "../include/io.h"
 
 /* ============================================================
  * MyOS GUI — VESA VBE 320×200 32-bit framebuffer
@@ -27,9 +28,7 @@ static uint8_t backbuffer[BUF_SIZE];
 static window_t windows[MAX_WINDOWS];
 static int      win_count = 0;
 
-/* VGA 256-renk paleti (basit 6-bit RGB dönüşümü) */
-static inline void outb(uint16_t p, uint8_t v) { __asm__ volatile("outb %0,%1"::"a"(v),"Nd"(p)); }
-static inline uint8_t inb(uint16_t p) { uint8_t v; __asm__ volatile("inb %1,%0":"=a"(v):"Nd"(p)); return v; }
+/* Port I/O (outb/inb) artık include/io.h'de. */
 
 /* ============================================================
  * 32-bit ARGB → VGA palette index.

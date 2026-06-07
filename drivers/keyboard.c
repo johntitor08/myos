@@ -1,6 +1,7 @@
 #include "../include/keyboard.h"
 #include "../include/idt.h"
 #include "../include/screen.h"
+#include "../include/io.h"
 
 /* Klavye tamponu — IRQ1 handler ile tüketici arasında paylaşılır,
  * bu yüzden volatile (derleyici tüketicinin spin döngüsündeki
@@ -32,14 +33,7 @@ static const char scancode_shift[] = {
     '*',0,' '
 };
 
-/* ============================================================
- * Port I/O
- * ============================================================ */
-static inline uint8_t inb(uint16_t port) {
-    uint8_t ret;
-    __asm__ volatile ("inb %1, %0" : "=a"(ret) : "Nd"(port));
-    return ret;
-}
+/* Port I/O artık include/io.h'de. */
 
 /* ============================================================
  * IRQ1 handler - klavye interrupt'ı

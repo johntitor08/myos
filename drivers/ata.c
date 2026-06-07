@@ -1,5 +1,6 @@
 #include "../include/ata.h"
 #include "../include/screen.h"
+#include "../include/io.h"
 
 /* ============================================================
  * ATA PIO Modu Disk Sürücüsü
@@ -10,11 +11,7 @@ static uint8_t  ata_available = 0;
 static char     ata_model[41];
 static uint32_t ata_sectors   = 0;
 
-/* Port I/O */
-static inline void outb(uint16_t p, uint8_t v)  { __asm__ volatile("outb %0,%1"::"a"(v),"Nd"(p)); }
-static inline void outw(uint16_t p, uint16_t v) { __asm__ volatile("outw %0,%1"::"a"(v),"Nd"(p)); }
-static inline uint8_t  inb(uint16_t p) { uint8_t v;  __asm__ volatile("inb %1,%0":"=a"(v):"Nd"(p)); return v; }
-static inline uint16_t inw(uint16_t p) { uint16_t v; __asm__ volatile("inw %1,%0":"=a"(v):"Nd"(p)); return v; }
+/* Port I/O artık include/io.h'de. */
 
 /* ============================================================
  * Disk hazır olana kadar bekle

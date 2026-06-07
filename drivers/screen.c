@@ -1,4 +1,5 @@
 #include "../include/screen.h"
+#include "../include/io.h"
 #include <stdint.h>
 
 /* VGA bellek adresi */
@@ -18,12 +19,7 @@ static inline uint16_t vga_entry(char c, uint8_t color) {
     return (uint16_t)c | ((uint16_t)color << 8);
 }
 
-/* ============================================================
- * Port I/O: cursor güncellemek için
- * ============================================================ */
-static inline void outb(uint16_t port, uint8_t value) {
-    __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
-}
+/* Port I/O (outb) artık include/io.h'de. */
 
 /* ============================================================
  * Hardware cursor güncelle

@@ -2,6 +2,7 @@
 #include "../include/idt.h"
 #include "../include/screen.h"
 #include "../include/task.h"
+#include "../include/io.h"
 
 /* PIT (Programmable Interval Timer) */
 #define PIT_CHANNEL0    0x40
@@ -13,9 +14,7 @@
  * volatile olmazsa busy-wait döngüsü okumayı önbelleğe alıp asılabilir. */
 static volatile uint32_t timer_ticks = 0;
 
-static inline void outb(uint16_t port, uint8_t val) {
-    __asm__ volatile ("outb %0, %1" : : "a"(val), "Nd"(port));
-}
+/* Port I/O artık include/io.h'de. */
 
 /* ============================================================
  * IRQ0 handler: sistem saati
