@@ -3,6 +3,7 @@
 #include "../include/memory.h"
 #include "../include/io.h"
 #include "../include/critical.h"
+#include "../include/task.h"
 #include "../include/critical.h"
 
 /* ============================================================
@@ -48,6 +49,71 @@ static uint16_t rx_offset  = 0;
  * doldurur, shell ping komutu yoklar). */
 static volatile int       g_ping_got = 0;
 static volatile uint16_t  g_ping_seq = 0;
+
+/* ============================================================
+ * ARP önbelleği + outbound çözümleme.
+ * udp/ping artık hedef MAC'i ARP ile çözüp unicast gönderir; çözülemezse
+ * broadcast'e düşer. Aynı subnet'teki hedef doğrudan, dışındaki gateway
+ * üzerinden çözülür.
+ * ============================================================ */
+#define ARP_CACHE_SIZE 8
+typedef struct { ip_addr_t ip; mac_addr_t mac; uint8_t valid; } arp_entry_t;
+static arp_entry_t arp_cache[ARP_CACHE_SIZE];
+static uint8_t     arp_cache_next = 0;
+
+static void arp_cache_put(ip_addr_t ip, const uint8_t *mac) {
+    for (int i = 0; i < ARP_CACHE_SIZE; i++)
+        if (arp_cache[i].valid && arp_cache[i].ip == ip) {
+            memcpy(arp_cache[i].mac.bytes, mac, 6); return;
+        }
+    for (int i = 0; i < ARP_CACHE_SIZE; i++)
+        if (!arp_cache[i].valid) {
+            arp_cache[i].ip = ip; memcpy(arp_cache[i].mac.bytes, mac, 6);
+            arp_cache[i].valid = 1; return;
+        }
+    arp_cache[arp_cache_next].ip = ip;                 /* hepsi dolu: değiştir */
+    memcpy(arp_cache[arp_cache_next].mac.bytes, mac, 6);
+    arp_cache[arp_cache_next].valid = 1;
+    arp_cache_next = (uint8_t)((arp_cache_next + 1) % ARP_CACHE_SIZE);
+}
+static int arp_cache_get(ip_addr_t ip, mac_addr_t *out) {
+    for (int i = 0; i < ARP_CACHE_SIZE; i++)
+        if (arp_cache[i].valid && arp_cache[i].ip == ip) {
+            *out = arp_cache[i].mac; return 1;
+        }
+    return 0;
+}
+static void arp_send_request(ip_addr_t target) {
+    static uint8_t fr[42];
+    memset(fr, 0, sizeof(fr));
+    eth_header_t *eth = (eth_header_t *)fr;
+    for (int i = 0; i < 6; i++) eth->dst.bytes[i] = 0xFF;     /* broadcast */
+    eth->src  = net.mac;
+    eth->type = net_htons(ETH_TYPE_ARP);
+    uint8_t *o = fr + ETH_HDR_LEN;
+    o[0]=0; o[1]=1; o[2]=0x08; o[3]=0x00; o[4]=6; o[5]=4; o[6]=0; o[7]=1; /* request */
+    memcpy(o + 8,  net.mac.bytes, 6);   /* sha = bizim MAC */
+    memcpy(o + 14, &net.ip, 4);         /* spa = bizim IP */
+    memcpy(o + 24, &target, 4);         /* tpa = hedef IP (tha=0) */
+    net_send_raw(fr, 42);
+}
+/* dst için L2 hedefini çöz. Bulursa 1 + mac; aksi halde 0. */
+static int net_resolve(ip_addr_t dst, mac_addr_t *mac) {
+    if (!net.available) return 0;
+    ip_addr_t target = dst;
+    if ((dst & net.netmask) != (net.ip & net.netmask))
+        target = net.gateway;                 /* subnet dışı -> gateway */
+    if (arp_cache_get(target, mac)) return 1;
+    for (int tries = 0; tries < 3; tries++) {
+        arp_send_request(target);
+        for (int t = 0; t < 50; t++) {        /* ~0.5s yanıt bekle */
+            net_receive();
+            if (arp_cache_get(target, mac)) return 1;
+            task_sleep(10);
+        }
+    }
+    return 0;
+}
 
 /* ============================================================
  * PCI: RTL8139 bul (basit brute-force tarama)
@@ -231,8 +297,10 @@ int udp_send(ip_addr_t dst_ip, uint16_t src_port, uint16_t dst_port,
     udp_header_t *udp = (udp_header_t *)(frame + ETH_HDR_LEN + sizeof(ip_header_t));
     uint8_t      *payload = frame + ETH_HDR_LEN + sizeof(ip_header_t) + sizeof(udp_header_t);
 
-    /* Ethernet header */
-    for (int i = 0; i < 6; i++) eth->dst.bytes[i] = 0xFF; /* broadcast */
+    /* Ethernet header: hedef MAC'i ARP ile çöz (çözülemezse broadcast) */
+    mac_addr_t dmac;
+    if (net_resolve(dst_ip, &dmac)) eth->dst = dmac;
+    else for (int i = 0; i < 6; i++) eth->dst.bytes[i] = 0xFF;
     eth->src  = net.mac;
     eth->type = net_htons(ETH_TYPE_IP);
 
@@ -342,7 +410,9 @@ void net_send_ping(ip_addr_t dst, uint16_t seq) {
     ip_header_t   *ip  = (ip_header_t *)(fr + ETH_HDR_LEN);
     icmp_header_t *ic  = (icmp_header_t *)(fr + ETH_HDR_LEN + sizeof(ip_header_t));
 
-    for (int i = 0; i < 6; i++) eth->dst.bytes[i] = 0xFF;   /* broadcast */
+    mac_addr_t dmac;                                        /* hedef MAC'i çöz */
+    if (net_resolve(dst, &dmac)) eth->dst = dmac;
+    else for (int i = 0; i < 6; i++) eth->dst.bytes[i] = 0xFF;
     eth->src  = net.mac;
     eth->type = net_htons(ETH_TYPE_IP);
 
@@ -400,6 +470,9 @@ void net_receive(void) {
         /* ARP isteği: bizim IP'miz soruluyorsa yanıtla (böylece dış dünya
          * statik ARP girişi olmadan bizi bulabilir). */
         if (etype == ETH_TYPE_ARP && pkt_len >= ETH_HDR_LEN + 28) {
+            const uint8_t *a = pkt + ETH_HDR_LEN;        /* gönderenin IP->MAC */
+            ip_addr_t spa; memcpy(&spa, a + 14, 4);
+            arp_cache_put(spa, a + 8);                   /* req ve reply için öğren */
             arp_reply(pkt);
         }
         /* IPv4: başlık alanlarını okumadan önce pkt_len'in kapsadığını doğrula. */
