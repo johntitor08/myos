@@ -125,8 +125,12 @@ int net_init(void) {
     /* RX buffer adresini RTL'ye ver */
     outl(io + RTL_RBSTART, (uint32_t)rx_buffer);
 
-    /* IMR: TX OK + RX OK */
-    outw(io + RTL_IMR, 0x0005);
+    /* IMR=0: NIC interrupt'larını KAPALI tut. Sürücü polling kullanıyor
+     * (net_poll task'ı net_receive ile yokluyor) ve kayıtlı bir NIC IRQ
+     * handler'ı YOK. Interrupt açık olsaydı, gelen ilk çerçevede NIC IRQ
+     * yükseltir, handler ISR'yi (0x3E) temizlemediği için PIC EOI sonrası
+     * hemen yeniden tetiklenir -> IRQ storm -> sistem kilitlenir. */
+    outw(io + RTL_IMR, 0x0000);
 
     /* RCR: Accept All + wrap */
     outl(io + RTL_RCR, 0xF | (1 << 7));

@@ -63,6 +63,17 @@ myos.img: boot/boot.bin kernel.bin
 run: myos.img
 	qemu-system-i386 -fda myos.img -boot a
 
+# Ag ile calistir: RTL8139 (user-mode networking) + paket dökümü.
+# Misafir IP'si SLIRP varsayilanlariyla eslesir: 10.0.2.15, gw 10.0.2.2.
+# Cikan/gelen tum cerceveler net.pcap'e yazilir (tcpdump/tshark/wireshark
+# ile incelenebilir). Test: shell'de 'netinfo', sonra
+#   udpsend 10.0.2.2 9999 merhaba
+NETOPTS = -netdev user,id=n0 -device rtl8139,netdev=n0 \
+          -object filter-dump,id=dump0,netdev=n0,file=net.pcap
+
+net: myos.img
+	qemu-system-i386 -fda myos.img -boot a $(NETOPTS)
+
 # Debug modunda calistir
 debug: myos.img
 	qemu-system-i386 -fda myos.img -boot a -s -S &
