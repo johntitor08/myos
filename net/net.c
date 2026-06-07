@@ -4,6 +4,7 @@
 #include "../include/io.h"
 #include "../include/critical.h"
 #include "../include/task.h"
+#include "../include/timer.h"
 #include "../include/critical.h"
 
 /* ============================================================
@@ -439,6 +440,107 @@ void net_ping_clear(void)       { g_ping_got = 0; }
 int  net_ping_check(uint16_t s) { return g_ping_got && g_ping_seq == s; }
 
 /* ============================================================
+ * DHCP istemcisi (DISCOVER -> OFFER -> REQUEST -> ACK).
+ * Broadcast UDP 68->67. Statik IP varsayılanı korunur; bu yalnızca
+ * 'dhcp' komutuyla tetiklenir.
+ * ============================================================ */
+#define DHCP_SPORT 68
+#define DHCP_DPORT 67
+static uint32_t   g_dhcp_xid    = 0;
+static ip_addr_t  g_dhcp_offer  = 0, g_dhcp_server = 0;
+static volatile ip_addr_t g_dhcp_ip = 0, g_dhcp_gw = 0, g_dhcp_mask = 0;
+static volatile int g_dhcp_done = 0;
+
+static void dhcp_send(uint8_t msg_type) {
+    if (!net.available) return;
+    static uint8_t fr[ETH_HDR_LEN + sizeof(ip_header_t) + sizeof(udp_header_t) + 300];
+    memset(fr, 0, sizeof(fr));
+    eth_header_t *eth = (eth_header_t *)fr;
+    ip_header_t  *ip  = (ip_header_t *)(fr + ETH_HDR_LEN);
+    udp_header_t *udp = (udp_header_t *)(fr + ETH_HDR_LEN + sizeof(ip_header_t));
+    uint8_t *bp = (uint8_t *)udp + sizeof(udp_header_t);   /* BOOTP başı */
+
+    for (int i = 0; i < 6; i++) eth->dst.bytes[i] = 0xFF;  /* broadcast */
+    eth->src = net.mac; eth->type = net_htons(ETH_TYPE_IP);
+
+    bp[0] = 1; bp[1] = 1; bp[2] = 6; bp[3] = 0;            /* op,htype,hlen,hops */
+    memcpy(bp + 4, &g_dhcp_xid, 4);                        /* xid */
+    bp[10] = 0x80;                                         /* flags: broadcast */
+    memcpy(bp + 28, net.mac.bytes, 6);                    /* chaddr */
+    bp[236] = 0x63; bp[237] = 0x82; bp[238] = 0x53; bp[239] = 0x63;  /* magic */
+    int o = 240;
+    bp[o++] = 53; bp[o++] = 1; bp[o++] = msg_type;        /* DHCP msg type */
+    if (msg_type == 3) {                                  /* REQUEST */
+        bp[o++] = 50; bp[o++] = 4; memcpy(bp + o, &g_dhcp_offer, 4);  o += 4;
+        bp[o++] = 54; bp[o++] = 4; memcpy(bp + o, &g_dhcp_server, 4); o += 4;
+    }
+    bp[o++] = 55; bp[o++] = 4; bp[o++] = 1; bp[o++] = 3; bp[o++] = 6; bp[o++] = 15;
+    bp[o++] = 255;                                        /* end */
+
+    uint16_t udp_len = (uint16_t)(sizeof(udp_header_t) + o);
+    uint16_t ip_len  = (uint16_t)(sizeof(ip_header_t) + udp_len);
+    udp->src_port = net_htons(DHCP_SPORT);
+    udp->dst_port = net_htons(DHCP_DPORT);
+    udp->length   = net_htons(udp_len);
+    udp->checksum = 0;                                    /* IPv4'te opsiyonel */
+    ip->version_ihl = 0x45; ip->ttl = 64; ip->protocol = IP_PROTO_UDP;
+    ip->src = 0x00000000; ip->dst = 0xFFFFFFFF;          /* 0.0.0.0 -> 255.255.255.255 */
+    ip->total_len = net_htons(ip_len);
+    ip->checksum = 0; ip->checksum = ip_checksum(ip, sizeof(ip_header_t));
+    net_send_raw(fr, (uint16_t)(ETH_HDR_LEN + ip_len));
+}
+
+/* OFFER/ACK işle. p = BOOTP başı, len = BOOTP uzunluğu. */
+static void dhcp_input(const uint8_t *p, uint32_t len) {
+    if (len < 240) return;
+    uint32_t xid; memcpy(&xid, p + 4, 4);
+    if (xid != g_dhcp_xid) return;                        /* bizim isteğimiz değil */
+    if (!(p[236]==0x63 && p[237]==0x82 && p[238]==0x53 && p[239]==0x63)) return;
+    ip_addr_t yiaddr; memcpy(&yiaddr, p + 16, 4);
+    uint8_t mtype = 0; ip_addr_t mask = 0, gw = 0, srv = 0;
+    uint32_t i = 240;
+    while (i < len) {
+        uint8_t opt = p[i++];
+        if (opt == 255) break;                           /* end */
+        if (opt == 0) continue;                          /* pad */
+        if (i >= len) break;
+        uint8_t l = p[i++];
+        if (i + l > len) break;
+        if      (opt == 53 && l >= 1) mtype = p[i];
+        else if (opt == 1  && l >= 4) memcpy(&mask, p + i, 4);
+        else if (opt == 3  && l >= 4) memcpy(&gw,   p + i, 4);
+        else if (opt == 54 && l >= 4) memcpy(&srv,  p + i, 4);
+        i += l;
+    }
+    if (mtype == 2) {                                     /* OFFER -> REQUEST */
+        g_dhcp_offer = yiaddr; g_dhcp_server = srv;
+        dhcp_send(3);
+    } else if (mtype == 5) {                              /* ACK -> uygula */
+        g_dhcp_ip = yiaddr; g_dhcp_mask = mask; g_dhcp_gw = gw;
+        g_dhcp_done = 1;
+    }
+}
+
+int net_dhcp(void) {
+    if (!net.available) return -1;
+    g_dhcp_done = 0;
+    g_dhcp_xid = timer_get_ticks() ^ 0x1234ABCDu;
+    if (!g_dhcp_xid) g_dhcp_xid = 0xDEADBEEFu;
+    for (int tries = 0; tries < 3 && !g_dhcp_done; tries++) {
+        dhcp_send(1);                                    /* DISCOVER */
+        for (int t = 0; t < 100 && !g_dhcp_done; t++) {  /* ~1s */
+            net_receive();
+            task_sleep(10);
+        }
+    }
+    if (!g_dhcp_done) return -1;
+    net.ip = g_dhcp_ip;
+    if (g_dhcp_mask) net.netmask = g_dhcp_mask;
+    if (g_dhcp_gw)   net.gateway = g_dhcp_gw;
+    return 0;
+}
+
+/* ============================================================
  * RX: gelen paketleri işle
  * ============================================================ */
 void net_receive(void) {
@@ -494,6 +596,21 @@ void net_receive(void) {
                     } else if (icmp->type == 0) {    /* echo reply -> ping komutu için kaydet */
                         g_ping_seq = net_htons(icmp->seq);
                         g_ping_got = 1;
+                    }
+                }
+            }
+            else if (ip->protocol == IP_PROTO_UDP) {     /* DHCP yanıtı (port 68) */
+                uint16_t ip_total = net_htons(ip->total_len);
+                if (ip_total >= sizeof(ip_header_t) + sizeof(udp_header_t) &&
+                    pkt_len >= ETH_HDR_LEN + ip_total) {
+                    udp_header_t *udp =
+                        (udp_header_t *)((uint8_t *)ip + sizeof(ip_header_t));
+                    uint16_t ulen = net_htons(udp->length);
+                    if (net_htons(udp->dst_port) == DHCP_SPORT &&
+                        ulen >= sizeof(udp_header_t) &&
+                        (uint32_t)(ETH_HDR_LEN + sizeof(ip_header_t) + ulen) <= pkt_len) {
+                        dhcp_input((uint8_t *)udp + sizeof(udp_header_t),
+                                   (uint32_t)(ulen - sizeof(udp_header_t)));
                     }
                 }
             }

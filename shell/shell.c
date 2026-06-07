@@ -38,7 +38,7 @@ static void cmd_help(void) {
     screen_println(" Sistem: ps, kill, sleep, meminfo, uname, uptime, clear, reboot");
     screen_println(" Hesap: calc <a> <op> <b>     (op: + - * / %)");
     screen_println(" Disk: diskinfo, diskread <lba>");
-    screen_println(" Ag: netinfo, ping <ip>, udpsend <ip> <port> <msg>");
+    screen_println(" Ag: netinfo, dhcp, ping <ip>, udpsend <ip> <port> <msg>");
     screen_println(" GUI: gui");
     screen_println(" Diger: echo, help");
 }
@@ -163,6 +163,12 @@ static void cmd_udpsend(char **av, int ac) {
         screen_print("Gonderildi: "); screen_println(msg);
     } else screen_println("Hata: Ag karti yok!");
     (void)n;
+}
+
+static void cmd_dhcp(void) {
+    screen_println("DHCP: adres aliniyor...");
+    if(net_dhcp()==0) net_print_info();
+    else screen_println("DHCP basarisiz (zaman asimi / sunucu yok).");
 }
 
 static void cmd_ping(char **av, int ac) {
@@ -295,6 +301,7 @@ void shell_run(void) {
             else screen_println("Kullanim: diskread <lba>");
         }
         else if(!kstrcmp(argv[0],"udpsend")) cmd_udpsend(argv,argc);
+        else if(!kstrcmp(argv[0],"dhcp"))    cmd_dhcp();
         else if(!kstrcmp(argv[0],"ping"))    cmd_ping(argv,argc);
         else if(!kstrcmp(argv[0],"gui")) {
             screen_println("GUI moduna geciliyor... (Ctrl+Alt+G -> QEMU)");
