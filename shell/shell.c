@@ -21,7 +21,8 @@
 static int parse_args(char *cmd, char *args[], int max) {
     int argc=0; char *p=cmd;
     while(*p&&argc<max){
-        while(*p==' ')p++; if(!*p)break;
+        while(*p==' ')p++;
+        if(!*p)break;
         args[argc++]=p;
         while(*p&&*p!=' ')p++;
         if(*p)*p++='\0';

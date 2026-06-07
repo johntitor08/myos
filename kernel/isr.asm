@@ -158,7 +158,7 @@ irq_common_stub:
 isr128:
     cli
     push byte 0
-    push byte 128
+    push dword 128      ; int_no=128 (push byte 128 signed-byte taşardı)
     ; Ortak stub benzeri ama syscall_dispatch çağırır
     pusha
     mov ax, ds
