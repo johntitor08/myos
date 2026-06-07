@@ -251,6 +251,9 @@ void gui_fill_circle(int cx, int cy, int r, uint32_t color) {
  * Karakter çiz (5×7 font)
  * ============================================================ */
 void gui_draw_char(int x, int y, char c, uint32_t fg, uint32_t bg) {
+    /* Font yalnızca ' '..'Z' (ASCII 32-90) içeriyor; küçük harfleri büyük
+     * harfe katla ki başlıklar/dosya adları boş yerine okunur görünsün. */
+    if (c >= 'a' && c <= 'z') c -= 32;
     int idx = c - ' ';
     if (idx < 0 || idx >= (int)(sizeof(font5x7)/sizeof(font5x7[0]))) idx = 0;
     for (int col = 0; col < 5; col++) {
