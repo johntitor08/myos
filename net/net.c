@@ -2,6 +2,8 @@
 #include "../include/screen.h"
 #include "../include/memory.h"
 #include "../include/io.h"
+#include "../include/critical.h"
+#include "../include/critical.h"
 
 /* ============================================================
  * MyOS Ağ Stack'i
@@ -41,6 +43,11 @@ static uint8_t *rx_buffer = 0;
 static uint8_t *tx_buffers[TX_BUF_COUNT];
 static uint8_t  tx_current = 0;
 static uint16_t rx_offset  = 0;
+
+/* Gelen ICMP echo reply durumu (ping komutu için; net_poll task'ı RX'te
+ * doldurur, shell ping komutu yoklar). */
+static volatile int       g_ping_got = 0;
+static volatile uint16_t  g_ping_seq = 0;
 
 /* ============================================================
  * PCI: RTL8139 bul (basit brute-force tarama)
@@ -125,8 +132,12 @@ int net_init(void) {
     /* RX buffer adresini RTL'ye ver */
     outl(io + RTL_RBSTART, (uint32_t)rx_buffer);
 
-    /* IMR: TX OK + RX OK */
-    outw(io + RTL_IMR, 0x0005);
+    /* IMR=0: NIC interrupt'larını KAPALI tut. Sürücü polling kullanıyor
+     * (net_poll task'ı net_receive ile yokluyor) ve kayıtlı bir NIC IRQ
+     * handler'ı YOK. Interrupt açık olsaydı, gelen ilk çerçevede NIC IRQ
+     * yükseltir, handler ISR'yi (0x3E) temizlemediği için PIC EOI sonrası
+     * hemen yeniden tetiklenir -> IRQ storm -> sistem kilitlenir. */
+    outw(io + RTL_IMR, 0x0000);
 
     /* RCR: Accept All + wrap */
     outl(io + RTL_RCR, 0xF | (1 << 7));
@@ -158,14 +169,18 @@ void net_print_info(void) {
  * ============================================================ */
 int net_send_raw(const void *data, uint16_t len) {
     if (!net.available) return -1;
+    if (len > 1536) return -1;          /* TX tampon boyutu (taşmayı önle) */
     uint32_t io = net.io_base;
 
-    memcpy(tx_buffers[tx_current], data, len);
-
-    outl(io + RTL_TSAD0 + tx_current * 4, (uint32_t)tx_buffers[tx_current]);
-    outl(io + RTL_TSD0  + tx_current * 4, len);
-
+    /* tx_current + TX register'ları birden çok task'tan (shell ping vs
+     * net_poll yanıtları) çağrılabilir; kritik bölgede atomik tut. */
+    uint32_t f = irq_save();
+    uint8_t slot = tx_current;
     tx_current = (tx_current + 1) % TX_BUF_COUNT;
+    memcpy(tx_buffers[slot], data, len);
+    outl(io + RTL_TSAD0 + slot * 4, (uint32_t)tx_buffers[slot]);
+    outl(io + RTL_TSD0  + slot * 4, len);
+    irq_restore(f);
     return 0;
 }
 
@@ -286,10 +301,88 @@ static void icmp_echo_reply(eth_header_t *req_eth, ip_header_t *req_ip,
 }
 
 /* ============================================================
+ * ARP isteğine yanıt ver (bizim IP'miz sorulduğunda). 'pkt' Ethernet
+ * çerçevesinin başı; ARP yükü ETH_HDR_LEN'de, en az 28 bayt olmalı.
+ * Alanlara byte offset'le erişiyoruz (paket hizalı olmayabilir).
+ * ============================================================ */
+static void arp_reply(const uint8_t *pkt) {
+    const uint8_t *a = pkt + ETH_HDR_LEN;
+    uint16_t oper = ((uint16_t)a[6] << 8) | a[7];
+    if (oper != 1) return;                       /* sadece ARP request */
+    ip_addr_t tpa; memcpy(&tpa, a + 24, 4);      /* hedef IP */
+    if (tpa != net.ip) return;                   /* bize sorulmuyorsa yok say */
+
+    static uint8_t fr[42];
+    memset(fr, 0, sizeof(fr));
+    eth_header_t *eth = (eth_header_t *)fr;
+    memcpy(eth->dst.bytes, a + 8, 6);            /* isteyenin MAC'i */
+    eth->src  = net.mac;
+    eth->type = net_htons(ETH_TYPE_ARP);
+
+    uint8_t *o = fr + ETH_HDR_LEN;
+    o[0] = 0; o[1] = 1;          /* htype: Ethernet */
+    o[2] = 0x08; o[3] = 0x00;    /* ptype: IPv4 */
+    o[4] = 6; o[5] = 4;          /* hlen, plen */
+    o[6] = 0; o[7] = 2;          /* oper: reply */
+    memcpy(o + 8,  net.mac.bytes, 6);   /* sha = bizim MAC */
+    memcpy(o + 14, &net.ip, 4);         /* spa = bizim IP */
+    memcpy(o + 18, a + 8,  6);          /* tha = isteyenin MAC */
+    memcpy(o + 24, a + 14, 4);          /* tpa = isteyenin IP */
+    net_send_raw(fr, 42);
+}
+
+/* ============================================================
+ * ICMP echo request (ping) gönder — broadcast MAC ile (ARP gerekmez).
+ * ============================================================ */
+void net_send_ping(ip_addr_t dst, uint16_t seq) {
+    if (!net.available) return;
+    static uint8_t fr[ETH_HDR_LEN + sizeof(ip_header_t) + sizeof(icmp_header_t)];
+    memset(fr, 0, sizeof(fr));
+    eth_header_t  *eth = (eth_header_t *)fr;
+    ip_header_t   *ip  = (ip_header_t *)(fr + ETH_HDR_LEN);
+    icmp_header_t *ic  = (icmp_header_t *)(fr + ETH_HDR_LEN + sizeof(ip_header_t));
+
+    for (int i = 0; i < 6; i++) eth->dst.bytes[i] = 0xFF;   /* broadcast */
+    eth->src  = net.mac;
+    eth->type = net_htons(ETH_TYPE_IP);
+
+    ip->version_ihl = 0x45;
+    ip->ttl         = 64;
+    ip->protocol    = IP_PROTO_ICMP;
+    ip->src         = net.ip;
+    ip->dst         = dst;
+    uint16_t iplen  = sizeof(ip_header_t) + sizeof(icmp_header_t);
+    ip->total_len   = net_htons(iplen);
+    ip->checksum    = 0;
+    ip->checksum    = ip_checksum(ip, sizeof(ip_header_t));
+
+    ic->type = 8; ic->code = 0;
+    ic->id   = net_htons(0x1234);
+    ic->seq  = net_htons(seq);
+    ic->checksum = 0;
+    ic->checksum = ip_checksum(ic, sizeof(icmp_header_t));
+
+    net_send_raw(fr, (uint16_t)(ETH_HDR_LEN + iplen));
+}
+
+void net_ping_clear(void)       { g_ping_got = 0; }
+int  net_ping_check(uint16_t s) { return g_ping_got && g_ping_seq == s; }
+
+/* ============================================================
  * RX: gelen paketleri işle
  * ============================================================ */
 void net_receive(void) {
+    static volatile int busy = 0;
     if (!net.available) return;
+
+    /* Reentrancy koruması: net_receive hem net_poll task'inden hem de
+     * cmd_ping'in bekleme döngüsünden çağrılabilir. Aynı anda iki çağrı
+     * RX ring'i (rx_offset/CAPR) bozardı; ikinci çağrı erken döner. */
+    uint32_t f = irq_save();
+    if (busy) { irq_restore(f); return; }
+    busy = 1;
+    irq_restore(f);
+
     uint32_t io = net.io_base;
 
     while (!(inb(io + RTL_CMD) & 0x01)) {  /* RX buffer boş değil */
@@ -302,28 +395,32 @@ void net_receive(void) {
 
         uint8_t *pkt = (uint8_t *)(rx_buffer + rx_offset + 4);
         eth_header_t *eth = (eth_header_t *)pkt;
+        uint16_t etype = (pkt_len >= ETH_HDR_LEN) ? net_htons(eth->type) : 0;
 
-        /* Başlık alanlarını okumadan önce pkt_len'in onları kapsadığını
-         * doğrula (kısa/runt çerçeveler tampondan taşma okumasına yol açar). */
-        if (pkt_len >= ETH_HDR_LEN && net_htons(eth->type) == ETH_TYPE_IP &&
-            pkt_len >= ETH_HDR_LEN + sizeof(ip_header_t)) {
+        /* ARP isteği: bizim IP'miz soruluyorsa yanıtla (böylece dış dünya
+         * statik ARP girişi olmadan bizi bulabilir). */
+        if (etype == ETH_TYPE_ARP && pkt_len >= ETH_HDR_LEN + 28) {
+            arp_reply(pkt);
+        }
+        /* IPv4: başlık alanlarını okumadan önce pkt_len'in kapsadığını doğrula. */
+        else if (etype == ETH_TYPE_IP && pkt_len >= ETH_HDR_LEN + sizeof(ip_header_t)) {
             ip_header_t *ip = (ip_header_t *)(pkt + ETH_HDR_LEN);
             if (ip->protocol == IP_PROTO_ICMP) {
-                char src_str[16];
-                ip_to_str(ip->src, src_str);
-                screen_print("[NET] ICMP paketi alindi, kaynak: ");
-                screen_println(src_str);
-
-                /* Echo request (type 8) ise yanıtla. ICMP başlığının
-                 * pakette tam olduğunu doğrula (taşma okuması olmasın). */
                 uint16_t ip_total = net_htons(ip->total_len);
                 if (ip_total >= sizeof(ip_header_t) + sizeof(icmp_header_t) &&
                     pkt_len >= ETH_HDR_LEN + ip_total) {
                     icmp_header_t *icmp =
                         (icmp_header_t *)((uint8_t *)ip + sizeof(ip_header_t));
-                    if (icmp->type == 8) {
+                    if (icmp->type == 8) {           /* echo request -> yanıtla */
+                        char src_str[16];
+                        ip_to_str(ip->src, src_str);
+                        screen_print("[NET] ICMP echo istegi, kaynak: ");
+                        screen_println(src_str);
                         icmp_echo_reply(eth, ip, icmp,
                                         (uint16_t)(ip_total - sizeof(ip_header_t)));
+                    } else if (icmp->type == 0) {    /* echo reply -> ping komutu için kaydet */
+                        g_ping_seq = net_htons(icmp->seq);
+                        g_ping_got = 1;
                     }
                 }
             }
@@ -332,4 +429,6 @@ void net_receive(void) {
         rx_offset = (uint16_t)((rx_offset + pkt_len + 4 + 3) & ~3);
         outw(io + RTL_CAPR, (uint16_t)(rx_offset - 16));
     }
+
+    busy = 0;
 }

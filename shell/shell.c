@@ -38,7 +38,7 @@ static void cmd_help(void) {
     screen_println(" Sistem: ps, kill, sleep, meminfo, uname, uptime, clear, reboot");
     screen_println(" Hesap: calc <a> <op> <b>     (op: + - * / %)");
     screen_println(" Disk: diskinfo, diskread <lba>");
-    screen_println(" Ag: netinfo, udpsend <ip> <port> <msg>");
+    screen_println(" Ag: netinfo, ping <ip>, udpsend <ip> <port> <msg>");
     screen_println(" GUI: gui");
     screen_println(" Diger: echo, help");
 }
@@ -165,6 +165,32 @@ static void cmd_udpsend(char **av, int ac) {
     (void)n;
 }
 
+static void cmd_ping(char **av, int ac) {
+    if(ac<2){screen_println("Kullanim: ping <ip>");return;}
+    uint8_t ip[4]={0}; char *p=av[1];
+    for(int i=0;i<4;i++){
+        while(*p>='0'&&*p<='9'){ip[i]=(uint8_t)(ip[i]*10+(*p-'0'));p++;}
+        if(*p=='.')p++;
+    }
+    ip_addr_t dst=(uint32_t)ip[0]|((uint32_t)ip[1]<<8)|((uint32_t)ip[2]<<16)|((uint32_t)ip[3]<<24);
+    int ok=0;
+    for(uint16_t seq=1; seq<=4; seq++){
+        net_ping_clear();
+        net_send_ping(dst, seq);
+        int got=0;
+        for(int t=0;t<100;t++){            /* ~1s timeout (100 * 10ms) */
+            net_receive();                 /* RX'i kendimiz yokla (net_poll
+                                              task'inin zamanlamasına bağlı kalma) */
+            if(net_ping_check(seq)){got=1;break;}
+            task_sleep(10);
+        }
+        if(got){ ok++; screen_print("Yanit "); screen_print(av[1]);
+                 screen_print(" seq="); screen_print_int(seq); screen_putchar('\n'); }
+        else   { screen_print("Zaman asimi seq="); screen_print_int(seq); screen_putchar('\n'); }
+    }
+    screen_print("ping: "); screen_print_int(ok); screen_println("/4 yanit");
+}
+
 /* GUI demo görevi */
 static void gui_demo_task(void) {
     gui_init();
@@ -269,6 +295,7 @@ void shell_run(void) {
             else screen_println("Kullanim: diskread <lba>");
         }
         else if(!kstrcmp(argv[0],"udpsend")) cmd_udpsend(argv,argc);
+        else if(!kstrcmp(argv[0],"ping"))    cmd_ping(argv,argc);
         else if(!kstrcmp(argv[0],"gui")) {
             screen_println("GUI moduna geciliyor... (Ctrl+Alt+G -> QEMU)");
             task_create("gui_demo", gui_demo_task, PRIORITY_NORMAL);
