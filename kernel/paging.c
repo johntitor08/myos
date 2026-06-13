@@ -99,6 +99,7 @@ static page_directory_t *kernel_dir = 0;
  * ============================================================ */
 page_directory_t *paging_create_directory(void) {
     page_directory_t *dir = (page_directory_t *)pmm_alloc_frame();
+    if (!dir) return 0;   /* fiziksel bellek bitti: NULL deref/memset'ten kaçın */
     memset(dir, 0, sizeof(page_directory_t));
     return dir;
 }
@@ -182,6 +183,10 @@ void paging_init(void) {
 
     /* Kernel page directory oluştur */
     kernel_dir = paging_create_directory();
+    if (!kernel_dir) {
+        screen_println("[PAGING] KRITIK: page directory icin frame yok!");
+        return;   /* paging açılmaz; sistem identity (paging'siz) devam eder */
+    }
 
     /* İlk 4MB'ı identity map et (kernel kodu burada) */
     identity_map_kernel(kernel_dir);
