@@ -5,6 +5,7 @@
 ASM     = nasm
 CC      = gcc
 LD      = ld
+HOSTCC  = cc          # host (native) derleyici - testler icin
 
 # Flags
 ASMFLAGS  = -f elf32
@@ -27,7 +28,7 @@ ASM_OBJS  = $(ASM_SRCS:.asm=.o)
 C_OBJS    = $(C_SRCS:.c=.o)
 
 # Hedefler
-.PHONY: all clean run debug
+.PHONY: all clean run debug test
 
 all: myos.img
 
@@ -74,8 +75,26 @@ debug: myos.img
 	gdb -ex "target remote localhost:1234" \
 	    -ex "symbol-file kernel.bin"
 
+# Host-tarafı regresyon testleri (QEMU gerektirmez)
+# - boot sektörü tam 512 bayt mı?
+# - LBA->CHS yükleyici kerneli birebir yeniden kuruyor mu?
+# - RTL8139 RX ofseti halka içinde sarıyor mu?
+test: myos.img tests/boot_loader_sim.c tests/rtl8139_rx_sim.c
+	@echo "== Boot sektoru boyutu =="
+	@SZ=$$(stat -c%s boot/boot.bin); \
+	 if [ "$$SZ" -ne 512 ]; then echo "HATA: boot.bin $$SZ bayt (512 olmali)"; exit 1; fi; \
+	 echo "OK: boot.bin = 512 bayt"
+	@echo "== Yukleyici (LBA->CHS) simulasyonu =="
+	@$(HOSTCC) -O2 -Wall -Wextra tests/boot_loader_sim.c -o tests/boot_loader_sim
+	@./tests/boot_loader_sim myos.img kernel.bin
+	@echo "== RTL8139 RX ofset simulasyonu =="
+	@$(HOSTCC) -O2 -Wall -Wextra tests/rtl8139_rx_sim.c -o tests/rtl8139_rx_sim
+	@./tests/rtl8139_rx_sim
+	@echo "Tum testler gecti."
+
 # Temizle
 clean:
 	rm -f boot/boot.bin kernel.bin myos.img
 	rm -f $(ASM_OBJS) $(C_OBJS)
+	rm -f tests/boot_loader_sim tests/rtl8139_rx_sim
 	@echo "Temizlendi."

@@ -2,3 +2,5 @@
 *.bin
 *.o
 *.elf
+tests/boot_loader_sim
+tests/rtl8139_rx_sim
