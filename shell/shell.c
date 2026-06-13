@@ -3,6 +3,7 @@
 #include "../include/keyboard.h"
 #include "../include/memory.h"
 #include "../include/fs.h"
+#include "../include/fat16.h"
 #include "../include/task.h"
 #include "../include/timer.h"
 #include "../include/paging.h"
@@ -37,6 +38,7 @@ static void cmd_help(void) {
     screen_set_color(COLOR_WHITE,COLOR_BLACK);
     screen_println(" Dosya: ls, cat, write, del, cp, mv, hexdump");
     screen_println(" Disk-FS: sync (diske kaydet), mount (diskten yukle)");
+    screen_println(" FAT16: fatls, fatcat <dosya> (gercek FAT16 diski oku)");
     screen_println(" Sistem: ps, kill, sleep, meminfo, uname, uptime, clear, reboot");
     screen_println(" Kullanici: run <elf> (ring-3'te calistir)");
     screen_println(" Hesap: calc <a> <op> <b>     (op: + - * / %)");
@@ -315,6 +317,18 @@ void shell_run(void) {
         else if(!kstrcmp(argv[0],"mount")){
             if(fs_mount()==0) screen_println("FS diskten yuklendi.");
             else screen_println("Yukleme hatasi (gecerli FS yok).");
+        }
+        else if(!kstrcmp(argv[0],"fatls")){
+            if(fat16_mount()==0) fat16_list();
+            else screen_println("FAT16 bulunamadi (disk FAT16 mi?).");
+        }
+        else if(!kstrcmp(argv[0],"fatcat")){
+            if(argc<2){screen_println("Kullanim: fatcat <dosya>");continue;}
+            if(fat16_mount()!=0){screen_println("FAT16 bulunamadi.");continue;}
+            static char fbuf[8192];
+            int n=fat16_read(argv[1],fbuf,sizeof(fbuf)-1);
+            if(n<0)screen_println("Dosya bulunamadi!");
+            else{fbuf[n]=0;screen_print(fbuf);if(n>0&&fbuf[n-1]!='\n')screen_putchar('\n');}
         }
         else if(!kstrcmp(argv[0],"diskinfo")) ata_print_info();
         else if(!kstrcmp(argv[0],"netinfo"))  net_print_info();
