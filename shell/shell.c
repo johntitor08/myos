@@ -269,8 +269,14 @@ static void cmd_run(char *fn) {
     int n = fs_read(fn, (char *)g_elf_buf, sizeof(g_elf_buf));
     if (n < 0) { screen_println("Dosya bulunamadi!"); return; }
     g_elf_size = (uint32_t)n;
-    if (!task_create("user", user_task_entry, PRIORITY_NORMAL))
-        screen_println("[RUN] Gorev olusturulamadi.");
+    task_t *t = task_create("user", user_task_entry, PRIORITY_NORMAL);
+    if (!t) { screen_println("[RUN] Gorev olusturulamadi."); return; }
+
+    /* Foreground: çocuk görev bitene kadar bekle. Shell bu sırada klavyeyi
+     * okumadığı için program 'read' ile girdiyi tek başına alır ve shell
+     * prompt'u program çıktısıyla karışmaz. */
+    uint32_t cpid = t->pid;
+    while (task_alive(cpid)) task_yield();
 }
 
 static void cmd_reboot(void) {
