@@ -70,9 +70,17 @@ make clean  # Temizle
 | `echo <metin>` | Metin yazdır |
 | `calc 5 + 3` | Hesap makinesi |
 | `meminfo` | Bellek istatistikleri |
+| `sync` | Dosya sistemini ATA diskine kaydet (kalıcı) |
+| `mount` | Dosya sistemini diskten yükle |
 | `uname` | Sistem bilgisi |
 | `clear` | Ekranı temizle |
 | `reboot` | Yeniden başlat |
+
+> **Kalıcı depolama:** `sync` ile FS ATA diskine yazılır; boot sırasında
+> diskte geçerli bir MyFS varsa otomatik yüklenir (`mount`), böylece
+> dosyalar yeniden başlatmalar arasında korunur. QEMU'da bir disk imajıyla
+> deneyin: `qemu-system-i386 -fda myos.img -hda disk.img` (örn. önce
+> `qemu-img create disk.img 16M`).
 
 ## Nasıl Çalışıyor?
 
@@ -84,10 +92,11 @@ make clean  # Temizle
 
 ## Geliştirme Yol Haritası
 
-- [ ] Sanal bellek / sayfalama (paging)
-- [ ] Süreç yönetimi (multitasking)
-- [ ] Sistem çağrıları (syscall)
-- [ ] ATA disk sürücüsü (gerçek disk I/O)
+- [x] Sanal bellek / sayfalama (paging)
+- [x] Süreç yönetimi (multitasking)
+- [x] Sistem çağrıları (syscall)
+- [x] ATA disk sürücüsü (gerçek disk I/O)
+- [x] Kalıcı dosya sistemi (MyFS'i ATA diskine sync/mount)
+- [x] ELF binary yükleme
+- [ ] Kullanıcı alanı (ring 3) — altyapı var, kabuk entegrasyonu bekliyor
 - [ ] FAT16 dosya sistemi
-- [ ] Kullanıcı alanı (ring 3)
-- [ ] ELF binary yükleme

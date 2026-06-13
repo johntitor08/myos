@@ -67,6 +67,12 @@ void kernel_main(void) {
     if (ata_init() == 0) {
         screen_set_color(COLOR_LIGHT_GREEN,COLOR_BLACK); screen_println("[ OK ]");
         screen_set_color(COLOR_WHITE,COLOR_BLACK); ata_print_info();
+        /* Diskte geçerli bir MyFS varsa belleğe yükle; yoksa fs_init'in
+         * kurduğu örnek dosyalarla devam et (kullanıcı 'sync' ile yazar). */
+        if (fs_mount() == 0)
+            screen_println("[FS] Disk'ten yuklendi (kalici depolama).");
+        else
+            screen_println("[FS] Diskte FS yok; bellek FS'i kullaniliyor ('sync' ile kaydet).");
     } else {
         screen_set_color(COLOR_YELLOW,COLOR_BLACK); screen_println("[SKIP]");
         screen_set_color(COLOR_WHITE,COLOR_BLACK);

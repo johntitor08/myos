@@ -10,4 +10,9 @@ int  fs_delete(const char *name);
 void fs_list(void);
 int  fs_exists(const char *name);
 
+/* Kalıcı depolama: FS'yi ATA diskine yaz / diskten yükle.
+ * Dönüş: 0 = başarılı, -1 = disk yok/hata/geçersiz FS. */
+int  fs_sync(void);
+int  fs_mount(void);
+
 #endif

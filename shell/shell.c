@@ -35,6 +35,7 @@ static void cmd_help(void) {
     screen_println("MyOS v3.0 Shell:");
     screen_set_color(COLOR_WHITE,COLOR_BLACK);
     screen_println(" Dosya: ls, cat, write, del, cp, mv, hexdump");
+    screen_println(" Disk-FS: sync (diske kaydet), mount (diskten yukle)");
     screen_println(" Sistem: ps, kill, sleep, meminfo, uname, uptime, clear, reboot");
     screen_println(" Hesap: calc <a> <op> <b>     (op: + - * / %)");
     screen_println(" Disk: diskinfo, diskread <lba>");
@@ -264,6 +265,14 @@ void shell_run(void) {
         else if(!kstrcmp(argv[0],"reboot")) cmd_reboot();
         else if(!kstrcmp(argv[0],"calc"))   cmd_calc(argv,argc);
         else if(!kstrcmp(argv[0],"write"))  cmd_write(argc>=2?argv[1]:0);
+        else if(!kstrcmp(argv[0],"sync")){
+            if(fs_sync()==0) screen_println("FS diske kaydedildi.");
+            else screen_println("Kayit hatasi (disk yok mu?).");
+        }
+        else if(!kstrcmp(argv[0],"mount")){
+            if(fs_mount()==0) screen_println("FS diskten yuklendi.");
+            else screen_println("Yukleme hatasi (gecerli FS yok).");
+        }
         else if(!kstrcmp(argv[0],"diskinfo")) ata_print_info();
         else if(!kstrcmp(argv[0],"netinfo"))  net_print_info();
         else if(!kstrcmp(argv[0],"diskread")){

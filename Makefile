@@ -79,7 +79,7 @@ debug: myos.img
 # - boot sektörü tam 512 bayt mı?
 # - LBA->CHS yükleyici kerneli birebir yeniden kuruyor mu?
 # - RTL8139 RX ofseti halka içinde sarıyor mu?
-test: myos.img tests/boot_loader_sim.c tests/rtl8139_rx_sim.c
+test: myos.img tests/boot_loader_sim.c tests/rtl8139_rx_sim.c tests/fs_persist_sim.c
 	@echo "== Boot sektoru boyutu =="
 	@SZ=$$(stat -c%s boot/boot.bin); \
 	 if [ "$$SZ" -ne 512 ]; then echo "HATA: boot.bin $$SZ bayt (512 olmali)"; exit 1; fi; \
@@ -90,11 +90,19 @@ test: myos.img tests/boot_loader_sim.c tests/rtl8139_rx_sim.c
 	@echo "== RTL8139 RX ofset simulasyonu =="
 	@$(HOSTCC) -O2 -Wall -Wextra tests/rtl8139_rx_sim.c -o tests/rtl8139_rx_sim
 	@./tests/rtl8139_rx_sim
+	@echo "== Kalici FS (sync/mount) uctan uca testi =="
+	@# -nostdinc -Iinclude: kernel'in stdint.h/stddef.h'ini kullan (fs.h
+	@#  <stdint.h> ister); libc yine printf/memcpy icin baglanir.
+	@# -fno-builtin: kernel mem*'lerini GCC builtin'leriyle kiyaslayip
+	@#  uyari uretmesin (kernel size_t 32-bit, host builtin 64-bit bekler).
+	@$(HOSTCC) -O2 -Wall -Wextra -nostdinc -Iinclude -fno-builtin \
+	    tests/fs_persist_sim.c -o tests/fs_persist_sim
+	@./tests/fs_persist_sim
 	@echo "Tum testler gecti."
 
 # Temizle
 clean:
 	rm -f boot/boot.bin kernel.bin myos.img
 	rm -f $(ASM_OBJS) $(C_OBJS)
-	rm -f tests/boot_loader_sim tests/rtl8139_rx_sim
+	rm -f tests/boot_loader_sim tests/rtl8139_rx_sim tests/fs_persist_sim
 	@echo "Temizlendi."
