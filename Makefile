@@ -49,6 +49,22 @@ boot/boot.bin: boot/boot.asm kernel.bin
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
+# Userland ring-3 örnek programı: hello.c -> ET_EXEC ELF -> gömülü C başlığı.
+# fs_init() bu ELF'i MyFS'e "hello" olarak yazar; 'run hello' ring-3'te koşar.
+USER_CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -nostdlib -nostdinc \
+              -fno-stack-protector -Os
+
+user/hello.elf: user/hello.c user/user.ld
+	$(CC) $(USER_CFLAGS) -c user/hello.c -o user/hello.o
+	$(LD) -m elf_i386 -T user/user.ld -o $@ user/hello.o
+
+user/hello_elf.h: user/hello.elf user/embed.py
+	@python3 user/embed.py user/hello.elf user/hello_elf.h
+	@echo "user/hello_elf.h uretildi (gomulu ring-3 programi)"
+
+# fs.c gömülü ELF başlığını dahil eder; kernel derlemesinden önce üretilmeli.
+fs/fs.o: user/hello_elf.h
+
 # Kernel binary
 # $^ prereq sırasını korur: önce ASM_OBJS (kernel_entry.o ilk), sonra C_OBJS.
 kernel.bin: $(ASM_OBJS) $(C_OBJS)
@@ -79,7 +95,7 @@ debug: myos.img
 # - boot sektörü tam 512 bayt mı?
 # - LBA->CHS yükleyici kerneli birebir yeniden kuruyor mu?
 # - RTL8139 RX ofseti halka içinde sarıyor mu?
-test: myos.img tests/boot_loader_sim.c tests/rtl8139_rx_sim.c tests/fs_persist_sim.c tests/gdt_sim.c
+test: myos.img tests/boot_loader_sim.c tests/rtl8139_rx_sim.c tests/fs_persist_sim.c tests/gdt_sim.c tests/elf_sim.c
 	@echo "== Boot sektoru boyutu =="
 	@SZ=$$(stat -c%s boot/boot.bin); \
 	 if [ "$$SZ" -ne 512 ]; then echo "HATA: boot.bin $$SZ bayt (512 olmali)"; exit 1; fi; \
@@ -102,11 +118,15 @@ test: myos.img tests/boot_loader_sim.c tests/rtl8139_rx_sim.c tests/fs_persist_s
 	@$(HOSTCC) -O2 -Wall -Wextra -nostdinc -Iinclude -fno-builtin \
 	    tests/gdt_sim.c -o tests/gdt_sim
 	@./tests/gdt_sim
+	@echo "== Gomulu userland ELF dogrulama testi =="
+	@$(HOSTCC) -O2 -Wall -Wextra -nostdinc -Iinclude tests/elf_sim.c -o tests/elf_sim
+	@./tests/elf_sim user/hello.elf
 	@echo "Tum testler gecti."
 
 # Temizle
 clean:
 	rm -f boot/boot.bin kernel.bin myos.img
 	rm -f $(ASM_OBJS) $(C_OBJS)
-	rm -f tests/boot_loader_sim tests/rtl8139_rx_sim tests/fs_persist_sim tests/gdt_sim
+	rm -f tests/boot_loader_sim tests/rtl8139_rx_sim tests/fs_persist_sim tests/gdt_sim tests/elf_sim
+	rm -f user/hello.o user/hello.elf user/hello_elf.h
 	@echo "Temizlendi."

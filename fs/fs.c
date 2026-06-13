@@ -3,6 +3,7 @@
 #include "../include/screen.h"
 #include "../include/kstring.h"
 #include "../include/ata.h"
+#include "../user/hello_elf.h"   /* gömülü ring-3 örnek programı (run hello) */
 #include <stdint.h>
 
 /* ============================================================
@@ -131,6 +132,9 @@ void fs_init(void) {
         "Shell'de 'help' yazarak komutlari gorebilirsiniz.\n", 0);
 
     fs_write("hello.txt", "Merhaba Dunya!\n", 0);
+
+    /* Ring-3 örnek programı: 'run hello' ile kullanıcı modunda çalışır */
+    fs_write("hello", (const char *)hello_elf, hello_elf_len);
 
     fs_initialized = 1;
     screen_println("[FS] MyFS hazir. Max dosya: 64, Block boyutu: 512B");
