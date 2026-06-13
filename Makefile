@@ -32,8 +32,13 @@ C_OBJS    = $(C_SRCS:.c=.o)
 all: myos.img
 
 # Bootloader derle
-boot/boot.bin: boot/boot.asm
-	$(ASM) -f bin $< -o $@
+# KERNEL_SECTORS, kernel.bin boyutundan üretilip nasm'a verilir; böylece
+# bootloader tam olarak kernel kadar sektör okur ve boyut arttıkça
+# manuel güncelleme gerekmez.
+boot/boot.bin: boot/boot.asm kernel.bin
+	@SECTORS=$$(( ( $$(stat -c%s kernel.bin) + 511 ) / 512 )); \
+	echo "Bootloader: kernel = $$SECTORS sektor (KERNEL_SECTORS)"; \
+	$(ASM) -f bin -dKERNEL_SECTORS=$$SECTORS $< -o $@
 
 # ASM kernel dosyaları
 %.o: %.asm

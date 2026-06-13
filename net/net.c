@@ -38,7 +38,12 @@ static net_state_t net = {0};
 #define RTL_CMD_RST     0x10
 
 /* TX/RX buffer */
-#define RX_BUF_SIZE     (8192 + 16 + 1500)
+/* RX halkası: RCR RBLEN=00 => 8K mantıksal halka. WRAP biti (1<<7) açık
+ * olduğundan kart, halka sonundaki paketi bölmeyip bitişik olarak +1500
+ * baytlık taşma alanına yazar; bu yüzden tampon 8K+16+1500 ayrılır ama
+ * okuma ofseti 8K halka boyuna göre sarılmalıdır. */
+#define RX_BUF_LEN      8192
+#define RX_BUF_SIZE     (RX_BUF_LEN + 16 + 1500)
 #define TX_BUF_COUNT    4
 
 static uint8_t *rx_buffer = 0;
@@ -616,7 +621,10 @@ void net_receive(void) {
             }
         }
 
-        rx_offset = (uint16_t)((rx_offset + pkt_len + 4 + 3) & ~3);
+        /* Ofseti 4'e hizala ve 8K mantıksal halka içinde sar; sarmazsak
+         * rx_offset tampon sonunu aşıp hdr[0]/hdr[1]'i sınır dışı okur ve
+         * CAPR donanımla senkronizasyonunu kaybeder. */
+        rx_offset = (uint16_t)(((rx_offset + pkt_len + 4 + 3) & ~3) % RX_BUF_LEN);
         outw(io + RTL_CAPR, (uint16_t)(rx_offset - 16));
     }
 
