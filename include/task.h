@@ -49,6 +49,7 @@ void    task_sleep(uint32_t ms);
 void    task_exit(void);
 void    task_kill(uint32_t pid);
 task_t *task_current(void);
+int     task_alive(uint32_t pid);
 void    task_tick(void);
 void    task_print_list(void);
 

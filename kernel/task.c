@@ -267,6 +267,17 @@ void task_kill(uint32_t pid) {
 
 task_t *task_current(void) { return current_task; }
 
+/* Verilen PID'li görev hâlâ canlı mı? (ZOMBIE/DEAD değil) — foreground
+ * 'run' çocuğun bitişini bu şekilde bekler. */
+int task_alive(uint32_t pid) {
+    for (int i = 0; i < MAX_TASKS; i++) {
+        if (tasks[i].pid == pid &&
+            tasks[i].state != TASK_ZOMBIE && tasks[i].state != TASK_DEAD)
+            return 1;
+    }
+    return 0;
+}
+
 /* ============================================================
  * ps — görev listesi
  * ============================================================ */
