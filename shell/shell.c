@@ -10,6 +10,7 @@
 #include "../include/net.h"
 #include "../include/gui.h"
 #include "../include/elf.h"
+#include "../include/gdt.h"
 #include "../include/kstring.h"
 #include "stdint.h"
 
@@ -35,10 +36,12 @@ static void cmd_help(void) {
     screen_println("MyOS v3.0 Shell:");
     screen_set_color(COLOR_WHITE,COLOR_BLACK);
     screen_println(" Dosya: ls, cat, write, del, cp, mv, hexdump");
+    screen_println(" Disk-FS: sync (diske kaydet), mount (diskten yukle)");
     screen_println(" Sistem: ps, kill, sleep, meminfo, uname, uptime, clear, reboot");
+    screen_println(" Kullanici: run <elf> (ring-3'te calistir)");
     screen_println(" Hesap: calc <a> <op> <b>     (op: + - * / %)");
     screen_println(" Disk: diskinfo, diskread <lba>");
-    screen_println(" Ag: netinfo, dhcp, ping <ip>, udpsend <ip> <port> <msg>");
+    screen_println(" Ag: netinfo, udpsend <ip> <port> <msg>, arping <ip>, dhcp");
     screen_println(" GUI: gui");
     screen_println(" Diger: echo, help");
 }
@@ -142,8 +145,10 @@ static void cmd_diskread(uint32_t lba) {
     static uint8_t sec[512];
     if(ata_read_sectors(lba,1,sec)!=0){screen_println("Okuma hatasi!");return;}
     screen_print("LBA "); screen_print_int((int32_t)lba); screen_println(":");
+    /* Bayt başına 2 hane yaz (screen_print_hex 0x+8 hane basar; 16/satir
+     * 80 sütuna sığmaz). hexdump ile aynı 2-haneli biçim. */
     for(int i=0;i<64;i++){
-        screen_print_hex(sec[i]); screen_putchar(' ');
+        print_hex2(sec[i]); screen_putchar(' ');
         if((i+1)%16==0) screen_putchar('\n');
     }
 }
@@ -165,36 +170,17 @@ static void cmd_udpsend(char **av, int ac) {
     (void)n;
 }
 
-static void cmd_dhcp(void) {
-    screen_println("DHCP: adres aliniyor...");
-    if(net_dhcp()==0) net_print_info();
-    else screen_println("DHCP basarisiz (zaman asimi / sunucu yok).");
-}
-
-static void cmd_ping(char **av, int ac) {
-    if(ac<2){screen_println("Kullanim: ping <ip>");return;}
-    uint8_t ip[4]={0}; char *p=av[1];
+static void cmd_arping(char *ipstr) {
+    if(!ipstr){screen_println("Kullanim: arping <ip>");return;}
+    uint8_t ip[4]={0}; char *p=ipstr;
     for(int i=0;i<4;i++){
         while(*p>='0'&&*p<='9'){ip[i]=(uint8_t)(ip[i]*10+(*p-'0'));p++;}
         if(*p=='.')p++;
     }
-    ip_addr_t dst=(uint32_t)ip[0]|((uint32_t)ip[1]<<8)|((uint32_t)ip[2]<<16)|((uint32_t)ip[3]<<24);
-    int ok=0;
-    for(uint16_t seq=1; seq<=4; seq++){
-        net_ping_clear();
-        net_send_ping(dst, seq);
-        int got=0;
-        for(int t=0;t<100;t++){            /* ~1s timeout (100 * 10ms) */
-            net_receive();                 /* RX'i kendimiz yokla (net_poll
-                                              task'inin zamanlamasına bağlı kalma) */
-            if(net_ping_check(seq)){got=1;break;}
-            task_sleep(10);
-        }
-        if(got){ ok++; screen_print("Yanit "); screen_print(av[1]);
-                 screen_print(" seq="); screen_print_int(seq); screen_putchar('\n'); }
-        else   { screen_print("Zaman asimi seq="); screen_print_int(seq); screen_putchar('\n'); }
-    }
-    screen_print("ping: "); screen_print_int(ok); screen_println("/4 yanit");
+    ip_addr_t dst = (uint32_t)ip[0]|((uint32_t)ip[1]<<8)|((uint32_t)ip[2]<<16)|((uint32_t)ip[3]<<24);
+    if(arp_send_request(dst)==0){
+        screen_print("ARP istegi gonderildi: "); screen_println(ipstr);
+    } else screen_println("Hata: Ag karti yok!");
 }
 
 /* GUI demo görevi */
@@ -257,6 +243,34 @@ static void gui_demo_task(void) {
     }
 }
 
+/* ============================================================
+ * run <dosya> — FS'teki bir ELF'i ring-3 kullanıcı modunda çalıştır
+ * ============================================================ */
+static uint8_t  g_elf_buf[65536];   /* tek seferde bir kullanıcı programı */
+static uint32_t g_elf_size;
+
+/* Kullanıcı görevinin kernel-tarafı giriş noktası (ring-0). ELF'i yükler,
+ * TSS.esp0'i ayarlar ve ring-3'e geçer. Kullanıcı programı 'exit' syscall'i
+ * ile çıkınca task_exit zincirine düşer. */
+static void user_task_entry(void) {
+    elf_program_t prog;
+    if (elf_load(g_elf_buf, g_elf_size, &prog) != 0 || !prog.valid) {
+        screen_println("[RUN] ELF yuklenemedi.");
+        return;   /* task_exit_wrapper -> task_exit */
+    }
+    tss_set_kernel_stack(task_current()->kernel_stack);
+    enter_usermode(prog.entry, prog.stack);   /* geri dönmez */
+}
+
+static void cmd_run(char *fn) {
+    if (!fn) { screen_println("Kullanim: run <elf-dosya>"); return; }
+    int n = fs_read(fn, (char *)g_elf_buf, sizeof(g_elf_buf));
+    if (n < 0) { screen_println("Dosya bulunamadi!"); return; }
+    g_elf_size = (uint32_t)n;
+    if (!task_create("user", user_task_entry, PRIORITY_NORMAL))
+        screen_println("[RUN] Gorev olusturulamadi.");
+}
+
 static void cmd_reboot(void) {
     screen_set_color(COLOR_RED,COLOR_BLACK);
     screen_println("Yeniden baslatiliyor...");
@@ -294,6 +308,14 @@ void shell_run(void) {
         else if(!kstrcmp(argv[0],"reboot")) cmd_reboot();
         else if(!kstrcmp(argv[0],"calc"))   cmd_calc(argv,argc);
         else if(!kstrcmp(argv[0],"write"))  cmd_write(argc>=2?argv[1]:0);
+        else if(!kstrcmp(argv[0],"sync")){
+            if(fs_sync()==0) screen_println("FS diske kaydedildi.");
+            else screen_println("Kayit hatasi (disk yok mu?).");
+        }
+        else if(!kstrcmp(argv[0],"mount")){
+            if(fs_mount()==0) screen_println("FS diskten yuklendi.");
+            else screen_println("Yukleme hatasi (gecerli FS yok).");
+        }
         else if(!kstrcmp(argv[0],"diskinfo")) ata_print_info();
         else if(!kstrcmp(argv[0],"netinfo"))  net_print_info();
         else if(!kstrcmp(argv[0],"diskread")){
@@ -301,8 +323,12 @@ void shell_run(void) {
             else screen_println("Kullanim: diskread <lba>");
         }
         else if(!kstrcmp(argv[0],"udpsend")) cmd_udpsend(argv,argc);
-        else if(!kstrcmp(argv[0],"dhcp"))    cmd_dhcp();
-        else if(!kstrcmp(argv[0],"ping"))    cmd_ping(argv,argc);
+        else if(!kstrcmp(argv[0],"arping")) cmd_arping(argc>=2?argv[1]:0);
+        else if(!kstrcmp(argv[0],"dhcp")){
+            screen_println("DHCP deneniyor...");
+            if(net_dhcp()==0) net_print_info();
+            else screen_println("DHCP basarisiz (zaman asimi).");
+        }
         else if(!kstrcmp(argv[0],"gui")) {
             screen_println("GUI moduna geciliyor... (Ctrl+Alt+G -> QEMU)");
             task_create("gui_demo", gui_demo_task, PRIORITY_NORMAL);
@@ -321,6 +347,7 @@ void shell_run(void) {
         else if(!kstrcmp(argv[0],"cp"))      cmd_cp(argv,argc);
         else if(!kstrcmp(argv[0],"mv"))      cmd_mv(argv,argc);
         else if(!kstrcmp(argv[0],"hexdump")) cmd_hexdump(argc>=2?argv[1]:0);
+        else if(!kstrcmp(argv[0],"run"))     cmd_run(argc>=2?argv[1]:0);
         else if(!kstrcmp(argv[0],"echo")){
             for(int i=1;i<argc;i++){if(i>1)screen_putchar(' ');screen_print(argv[i]);}
             screen_putchar('\n');

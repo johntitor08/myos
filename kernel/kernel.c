@@ -10,6 +10,7 @@
 #include "../include/ata.h"
 #include "../include/net.h"
 #include "../include/syscall.h"
+#include "../include/gdt.h"
 #include "stdint.h"
 
 static void task_heartbeat(void) {
@@ -41,6 +42,11 @@ void kernel_main(void) {
     screen_println("##############################################");
     screen_set_color(COLOR_WHITE, COLOR_BLACK);
 
+    /* GDT+TSS'i IDT'den önce kur: ring-3 segmentleri + TSS hazır olsun.
+     * Kernel kod/veri seçicileri (0x08/0x10) bootloader ile aynı kaldığı
+     * için ring-0 çalışması kesintisiz devam eder. */
+    gdt_init();
+
     screen_print("[1/9] IDT...        "); idt_init(); __asm__ volatile("sti");
     screen_set_color(COLOR_LIGHT_GREEN,COLOR_BLACK); screen_println("[ OK ]"); screen_set_color(COLOR_WHITE,COLOR_BLACK);
 
@@ -67,6 +73,12 @@ void kernel_main(void) {
     if (ata_init() == 0) {
         screen_set_color(COLOR_LIGHT_GREEN,COLOR_BLACK); screen_println("[ OK ]");
         screen_set_color(COLOR_WHITE,COLOR_BLACK); ata_print_info();
+        /* Diskte geçerli bir MyFS varsa belleğe yükle; yoksa fs_init'in
+         * kurduğu örnek dosyalarla devam et (kullanıcı 'sync' ile yazar). */
+        if (fs_mount() == 0)
+            screen_println("[FS] Disk'ten yuklendi (kalici depolama).");
+        else
+            screen_println("[FS] Diskte FS yok; bellek FS'i kullaniliyor ('sync' ile kaydet).");
     } else {
         screen_set_color(COLOR_YELLOW,COLOR_BLACK); screen_println("[SKIP]");
         screen_set_color(COLOR_WHITE,COLOR_BLACK);

@@ -89,7 +89,10 @@ static int arp_cache_get(ip_addr_t ip, mac_addr_t *out) {
         }
     return 0;
 }
-static void arp_send_request(ip_addr_t target) {
+/* ARP isteği yayınla. net_resolve içeride kullanır; shell 'arping' komutu
+ * net.h üzerinden çağırır (tek tanım: eski yinelenen sürüm kaldırıldı). */
+int arp_send_request(ip_addr_t target) {
+    if (!net.available) return -1;
     static uint8_t fr[42];
     memset(fr, 0, sizeof(fr));
     eth_header_t *eth = (eth_header_t *)fr;
@@ -101,7 +104,7 @@ static void arp_send_request(ip_addr_t target) {
     memcpy(o + 8,  net.mac.bytes, 6);   /* sha = bizim MAC */
     memcpy(o + 14, &net.ip, 4);         /* spa = bizim IP */
     memcpy(o + 24, &target, 4);         /* tpa = hedef IP (tha=0) */
-    net_send_raw(fr, 42);
+    return net_send_raw(fr, 42);
 }
 /* dst için L2 hedefini çöz. Bulursa 1 + mac; aksi halde 0. */
 static int net_resolve(ip_addr_t dst, mac_addr_t *mac) {
@@ -375,79 +378,51 @@ static void icmp_echo_reply(eth_header_t *req_eth, ip_header_t *req_ip,
 }
 
 /* ============================================================
- * ARP isteğine yanıt ver (bizim IP'miz sorulduğunda). 'pkt' Ethernet
- * çerçevesinin başı; ARP yükü ETH_HDR_LEN'de, en az 28 bayt olmalı.
- * Alanlara byte offset'le erişiyoruz (paket hizalı olmayabilir).
+ * ARP
  * ============================================================ */
-static void arp_reply(const uint8_t *pkt) {
-    const uint8_t *a = pkt + ETH_HDR_LEN;
-    uint16_t oper = ((uint16_t)a[6] << 8) | a[7];
-    if (oper != 1) return;                       /* sadece ARP request */
-    ip_addr_t tpa; memcpy(&tpa, a + 24, 4);      /* hedef IP */
-    if (tpa != net.ip) return;                   /* bize sorulmuyorsa yok say */
 
-    static uint8_t fr[42];
-    memset(fr, 0, sizeof(fr));
-    eth_header_t *eth = (eth_header_t *)fr;
-    memcpy(eth->dst.bytes, a + 8, 6);            /* isteyenin MAC'i */
-    eth->src  = net.mac;
+/* Saf yardımcı: gelen çerçeve bize yönelik bir ARP isteğiyse yanıtı 'out'a
+ * kurar ve uzunluğunu döndürür; değilse -1. Donanım/global kullanmaz, bu
+ * yüzden host'ta test edilebilir. */
+int arp_build_reply(const uint8_t *req, uint16_t req_len,
+                    mac_addr_t my_mac, ip_addr_t my_ip,
+                    uint8_t *out, uint16_t out_cap) {
+    if (req_len < ETH_HDR_LEN + sizeof(arp_packet_t)) return -1;
+    if (out_cap < ETH_HDR_LEN + sizeof(arp_packet_t)) return -1;
+
+    const eth_header_t *req_eth = (const eth_header_t *)req;
+    if (net_htons(req_eth->type) != ETH_TYPE_ARP) return -1;
+
+    const arp_packet_t *req_arp = (const arp_packet_t *)(req + ETH_HDR_LEN);
+    if (net_htons(req_arp->htype) != ARP_HTYPE_ETH) return -1;
+    if (net_htons(req_arp->ptype) != ARP_PTYPE_IP)  return -1;
+    if (net_htons(req_arp->oper)  != ARP_OP_REQUEST) return -1;
+    if (req_arp->tpa != my_ip) return -1;            /* bize sorulmuyor */
+
+    eth_header_t *eth = (eth_header_t *)out;
+    arp_packet_t *arp = (arp_packet_t *)(out + ETH_HDR_LEN);
+
+    eth->dst  = req_eth->src;          /* isteyene geri */
+    eth->src  = my_mac;
     eth->type = net_htons(ETH_TYPE_ARP);
 
-    uint8_t *o = fr + ETH_HDR_LEN;
-    o[0] = 0; o[1] = 1;          /* htype: Ethernet */
-    o[2] = 0x08; o[3] = 0x00;    /* ptype: IPv4 */
-    o[4] = 6; o[5] = 4;          /* hlen, plen */
-    o[6] = 0; o[7] = 2;          /* oper: reply */
-    memcpy(o + 8,  net.mac.bytes, 6);   /* sha = bizim MAC */
-    memcpy(o + 14, &net.ip, 4);         /* spa = bizim IP */
-    memcpy(o + 18, a + 8,  6);          /* tha = isteyenin MAC */
-    memcpy(o + 24, a + 14, 4);          /* tpa = isteyenin IP */
-    net_send_raw(fr, 42);
+    arp->htype = net_htons(ARP_HTYPE_ETH);
+    arp->ptype = net_htons(ARP_PTYPE_IP);
+    arp->hlen  = ETH_ADDR_LEN;
+    arp->plen  = 4;
+    arp->oper  = net_htons(ARP_OP_REPLY);
+    arp->sha   = my_mac;               /* bizim MAC */
+    arp->spa   = my_ip;                /* bizim IP  */
+    arp->tha   = req_arp->sha;         /* isteyenin MAC */
+    arp->tpa   = req_arp->spa;         /* isteyenin IP  */
+
+    return (int)(ETH_HDR_LEN + sizeof(arp_packet_t));
 }
 
 /* ============================================================
- * ICMP echo request (ping) gönder — broadcast MAC ile (ARP gerekmez).
- * ============================================================ */
-void net_send_ping(ip_addr_t dst, uint16_t seq) {
-    if (!net.available) return;
-    static uint8_t fr[ETH_HDR_LEN + sizeof(ip_header_t) + sizeof(icmp_header_t)];
-    memset(fr, 0, sizeof(fr));
-    eth_header_t  *eth = (eth_header_t *)fr;
-    ip_header_t   *ip  = (ip_header_t *)(fr + ETH_HDR_LEN);
-    icmp_header_t *ic  = (icmp_header_t *)(fr + ETH_HDR_LEN + sizeof(ip_header_t));
-
-    mac_addr_t dmac;                                        /* hedef MAC'i çöz */
-    if (net_resolve(dst, &dmac)) eth->dst = dmac;
-    else for (int i = 0; i < 6; i++) eth->dst.bytes[i] = 0xFF;
-    eth->src  = net.mac;
-    eth->type = net_htons(ETH_TYPE_IP);
-
-    ip->version_ihl = 0x45;
-    ip->ttl         = 64;
-    ip->protocol    = IP_PROTO_ICMP;
-    ip->src         = net.ip;
-    ip->dst         = dst;
-    uint16_t iplen  = sizeof(ip_header_t) + sizeof(icmp_header_t);
-    ip->total_len   = net_htons(iplen);
-    ip->checksum    = 0;
-    ip->checksum    = ip_checksum(ip, sizeof(ip_header_t));
-
-    ic->type = 8; ic->code = 0;
-    ic->id   = net_htons(0x1234);
-    ic->seq  = net_htons(seq);
-    ic->checksum = 0;
-    ic->checksum = ip_checksum(ic, sizeof(icmp_header_t));
-
-    net_send_raw(fr, (uint16_t)(ETH_HDR_LEN + iplen));
-}
-
-void net_ping_clear(void)       { g_ping_got = 0; }
-int  net_ping_check(uint16_t s) { return g_ping_got && g_ping_seq == s; }
-
-/* ============================================================
- * DHCP istemcisi (DISCOVER -> OFFER -> REQUEST -> ACK).
- * Broadcast UDP 68->67. Statik IP varsayılanı korunur; bu yalnızca
- * 'dhcp' komutuyla tetiklenir.
+ * DHCP istemcisi (DISCOVER/OFFER/REQUEST/ACK)
+ * Broadcast UDP 68->67. Statik IP varsayılanı korunur; yalnızca 'dhcp'
+ * komutuyla tetiklenir. (Bu blok master-merge'inde düşmüştü; geri yüklendi.)
  * ============================================================ */
 #define DHCP_SPORT 68
 #define DHCP_DPORT 67
@@ -572,18 +547,27 @@ void net_receive(void) {
 
         uint8_t *pkt = (uint8_t *)(rx_buffer + rx_offset + 4);
         eth_header_t *eth = (eth_header_t *)pkt;
-        uint16_t etype = (pkt_len >= ETH_HDR_LEN) ? net_htons(eth->type) : 0;
 
-        /* ARP isteği: bizim IP'miz soruluyorsa yanıtla (böylece dış dünya
-         * statik ARP girişi olmadan bizi bulabilir). */
-        if (etype == ETH_TYPE_ARP && pkt_len >= ETH_HDR_LEN + 28) {
-            const uint8_t *a = pkt + ETH_HDR_LEN;        /* gönderenin IP->MAC */
-            ip_addr_t spa; memcpy(&spa, a + 14, 4);
-            arp_cache_put(spa, a + 8);                   /* req ve reply için öğren */
-            arp_reply(pkt);
+        /* ARP: gelen istek/yanıttan gönderenin IP->MAC eşlemesini öğren
+         * (outbound net_resolve önbelleği dolsun), sonra bize yönelik bir
+         * istekse yanıtla — host MAC'imizi çözer, ICMP echo (ping) ulaşır. */
+        if (pkt_len >= ETH_HDR_LEN + sizeof(arp_packet_t) &&
+            net_htons(eth->type) == ETH_TYPE_ARP) {
+            const arp_packet_t *ra = (const arp_packet_t *)(pkt + ETH_HDR_LEN);
+            arp_cache_put(ra->spa, ra->sha.bytes);
+            static uint8_t arp_reply[ETH_HDR_LEN + sizeof(arp_packet_t)];
+            int rlen = arp_build_reply(pkt, pkt_len, net.mac, net.ip,
+                                       arp_reply, sizeof(arp_reply));
+            if (rlen > 0) {
+                screen_println("[NET] ARP istegi alindi, yanitlaniyor.");
+                net_send_raw(arp_reply, (uint16_t)rlen);
+            }
         }
-        /* IPv4: başlık alanlarını okumadan önce pkt_len'in kapsadığını doğrula. */
-        else if (etype == ETH_TYPE_IP && pkt_len >= ETH_HDR_LEN + sizeof(ip_header_t)) {
+
+        /* Başlık alanlarını okumadan önce pkt_len'in onları kapsadığını
+         * doğrula (kısa/runt çerçeveler tampondan taşma okumasına yol açar). */
+        if (pkt_len >= ETH_HDR_LEN && net_htons(eth->type) == ETH_TYPE_IP &&
+            pkt_len >= ETH_HDR_LEN + sizeof(ip_header_t)) {
             ip_header_t *ip = (ip_header_t *)(pkt + ETH_HDR_LEN);
             if (ip->protocol == IP_PROTO_ICMP) {
                 uint16_t ip_total = net_htons(ip->total_len);

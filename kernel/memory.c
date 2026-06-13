@@ -6,8 +6,6 @@
 #define BLOCK_HEADER    sizeof(mem_block_t)
 
 static mem_block_t *heap_start_block = NULL;
-static size_t total_allocated = 0;
-static size_t total_free = 0;
 
 /* ============================================================
  * memset / memcpy / memcmp implementasyonları
@@ -45,7 +43,6 @@ void memory_init(void) {
     heap_start_block->next    = NULL;
     heap_start_block->prev    = NULL;
     heap_start_block->magic   = BLOCK_MAGIC;
-    total_free = HEAP_SIZE - BLOCK_HEADER;
 }
 
 /* ============================================================
@@ -100,8 +97,6 @@ void *kmalloc(size_t size) {
                 current->size = size;
             }
             current->is_free = 0;
-            total_allocated += current->size;
-            total_free -= current->size;
             void *ret = (void *)((uint8_t *)current + BLOCK_HEADER);
             irq_restore(f);
             return ret;
@@ -158,8 +153,6 @@ void kfree(void *ptr) {
         return;
     }
     block->is_free = 1;
-    total_allocated -= block->size;
-    total_free += block->size;
     merge_free_blocks(block);
     irq_restore(f);
 }
@@ -167,10 +160,40 @@ void kfree(void *ptr) {
 /* ============================================================
  * Bellek istatistiklerini yazdır
  * ============================================================ */
+/* İstatistikleri çalışırken heap'i gezerek hesapla. Önceki sürüm
+ * total_allocated/total_free sayaçlarını artımlı tutuyordu ama bölme/
+ * birleştirmede geri kazanılan/harcanan BLOCK_HEADER baytlarını
+ * hesaba katmadığı için zamanla kayıyordu. Doğruluk kaynağı blok
+ * listesinin kendisidir; meminfo seyrek çağrıldığından O(n) gezinti
+ * sorun değil. En büyük boş blok aynı zamanda parçalanma göstergesidir. */
 void memory_print_stats(void) {
+    size_t used = 0, free = 0, largest_free = 0;
+    int blocks = 0;
+
+    uint32_t f = irq_save();
+    for (mem_block_t *b = heap_start_block; b; b = b->next) {
+        if (b->magic != BLOCK_MAGIC) {
+            irq_restore(f);
+            screen_println("[MEMORY] Heap corruption detected!");
+            return;
+        }
+        blocks++;
+        if (b->is_free) {
+            free += b->size;
+            if (b->size > largest_free) largest_free = b->size;
+        } else {
+            used += b->size;
+        }
+    }
+    irq_restore(f);
+
     screen_print("[MEMORY] Allocated: ");
-    screen_print_int((int32_t)total_allocated);
-    screen_print(" bytes | Free: ");
-    screen_print_int((int32_t)total_free);
-    screen_println(" bytes");
+    screen_print_int((int32_t)used);
+    screen_print(" B | Free: ");
+    screen_print_int((int32_t)free);
+    screen_print(" B | Blocks: ");
+    screen_print_int(blocks);
+    screen_print(" | Largest free: ");
+    screen_print_int((int32_t)largest_free);
+    screen_println(" B");
 }

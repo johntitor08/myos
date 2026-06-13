@@ -99,6 +99,7 @@ static page_directory_t *kernel_dir = 0;
  * ============================================================ */
 page_directory_t *paging_create_directory(void) {
     page_directory_t *dir = (page_directory_t *)pmm_alloc_frame();
+    if (!dir) return 0;   /* fiziksel bellek bitti: NULL deref/memset'ten kaçın */
     memset(dir, 0, sizeof(page_directory_t));
     return dir;
 }
@@ -182,12 +183,25 @@ void paging_init(void) {
 
     /* Kernel page directory oluştur */
     kernel_dir = paging_create_directory();
+    if (!kernel_dir) {
+        screen_println("[PAGING] KRITIK: page directory icin frame yok!");
+        return;   /* paging açılmaz; sistem identity (paging'siz) devam eder */
+    }
 
     /* İlk 4MB'ı identity map et (kernel kodu burada) */
     identity_map_kernel(kernel_dir);
 
     /* VGA belleğini de map et (0xB8000) */
     paging_map(kernel_dir, 0xB8000, 0xB8000, PAGE_PRESENT | PAGE_WRITABLE);
+
+    /* Kullanıcı penceresini (ELF yükleme alanı + user stack, 5MB-9MB)
+     * ring-3 erişimine aç: identity map yalnız supervisor (PAGE_USER yok),
+     * bu yüzden PTE'lere PAGE_USER eklenmezse ring-3 kodu ilk komutta
+     * page-fault alır. Bu aralık 0-32MB identity penceresi içindedir. */
+    for (uint32_t addr = 0x500000; addr < 0x900000; addr += PAGE_SIZE) {
+        paging_map(kernel_dir, addr, addr,
+                   PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER);
+    }
 
     /* Page directory'yi etkinleştir */
     paging_switch(kernel_dir);

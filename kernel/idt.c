@@ -1,6 +1,7 @@
 #include "../include/idt.h"
 #include "../include/screen.h"
 #include "../include/io.h"
+#include "../include/paging.h"
 #include <stdint.h>
 
 /* 256 IDT girişi */
@@ -120,6 +121,16 @@ static const char *exception_msgs[] = {
 };
 
 void isr_handler(registers_t *regs) {
+    /* Page fault (int 14): CR2'yi oku ve özel handler'a yönlendir.
+     * (Önceden bu generic handler tüm exception'ları yutuyordu, bu yüzden
+     *  page_fault_handler hiç çağrılmıyordu ve faulting adres kayboluyordu.) */
+    if (regs->int_no == 14) {
+        uint32_t cr2;
+        __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+        page_fault_handler(regs->err_code, cr2);
+        return;
+    }
+
     screen_set_color(COLOR_WHITE, COLOR_RED);
     screen_println("");
     screen_println("  *** KERNEL PANIC ***  ");

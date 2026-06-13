@@ -2,4 +2,11 @@
 *.bin
 *.o
 *.elf
-*.pcap
+tests/boot_loader_sim
+tests/rtl8139_rx_sim
+tests/fs_persist_sim
+tests/gdt_sim
+tests/elf_sim
+tests/arp_sim
+user/hello.elf
+user/hello_elf.h

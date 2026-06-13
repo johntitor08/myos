@@ -5,6 +5,7 @@
 ASM     = nasm
 CC      = gcc
 LD      = ld
+HOSTCC  = cc          # host (native) derleyici - testler icin
 
 # Flags
 ASMFLAGS  = -f elf32
@@ -18,7 +19,7 @@ LDFLAGS   = -m elf_i386 -T kernel/linker.ld --oformat binary
 # (call kernel_main) 0x10000'e gelmeli çünkü bootloader oraya atlar.
 ASM_SRCS  = kernel/kernel_entry.asm kernel/isr.asm kernel/switch.asm
 C_SRCS    = kernel/kernel.c kernel/idt.c kernel/memory.c kernel/paging.c \
-            kernel/elf.c kernel/syscall.c kernel/task.c \
+            kernel/elf.c kernel/syscall.c kernel/task.c kernel/gdt.c \
             drivers/screen.c drivers/keyboard.c drivers/timer.c drivers/ata.c \
             fs/fs.c shell/shell.c net/net.c gui/gui.c
 
@@ -27,7 +28,7 @@ ASM_OBJS  = $(ASM_SRCS:.asm=.o)
 C_OBJS    = $(C_SRCS:.c=.o)
 
 # Hedefler
-.PHONY: all clean run debug
+.PHONY: all clean run debug test
 
 all: myos.img
 
@@ -47,6 +48,22 @@ boot/boot.bin: boot/boot.asm kernel.bin
 # C kernel dosyaları
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
+
+# Userland ring-3 örnek programı: hello.c -> ET_EXEC ELF -> gömülü C başlığı.
+# fs_init() bu ELF'i MyFS'e "hello" olarak yazar; 'run hello' ring-3'te koşar.
+USER_CFLAGS = -m32 -ffreestanding -fno-pic -fno-pie -nostdlib -nostdinc \
+              -fno-stack-protector -Os
+
+user/hello.elf: user/hello.c user/user.ld
+	$(CC) $(USER_CFLAGS) -c user/hello.c -o user/hello.o
+	$(LD) -m elf_i386 -T user/user.ld -o $@ user/hello.o
+
+user/hello_elf.h: user/hello.elf user/embed.py
+	@python3 user/embed.py user/hello.elf user/hello_elf.h
+	@echo "user/hello_elf.h uretildi (gomulu ring-3 programi)"
+
+# fs.c gömülü ELF başlığını dahil eder; kernel derlemesinden önce üretilmeli.
+fs/fs.o: user/hello_elf.h
 
 # Kernel binary
 # $^ prereq sırasını korur: önce ASM_OBJS (kernel_entry.o ilk), sonra C_OBJS.
@@ -85,8 +102,48 @@ debug: myos.img
 	gdb -ex "target remote localhost:1234" \
 	    -ex "symbol-file kernel.bin"
 
+# Host-tarafı regresyon testleri (QEMU gerektirmez)
+# - boot sektörü tam 512 bayt mı?
+# - LBA->CHS yükleyici kerneli birebir yeniden kuruyor mu?
+# - RTL8139 RX ofseti halka içinde sarıyor mu?
+test: myos.img tests/boot_loader_sim.c tests/rtl8139_rx_sim.c tests/fs_persist_sim.c tests/gdt_sim.c tests/elf_sim.c tests/arp_sim.c
+	@echo "== Boot sektoru boyutu =="
+	@SZ=$$(stat -c%s boot/boot.bin); \
+	 if [ "$$SZ" -ne 512 ]; then echo "HATA: boot.bin $$SZ bayt (512 olmali)"; exit 1; fi; \
+	 echo "OK: boot.bin = 512 bayt"
+	@echo "== Yukleyici (LBA->CHS) simulasyonu =="
+	@$(HOSTCC) -O2 -Wall -Wextra tests/boot_loader_sim.c -o tests/boot_loader_sim
+	@./tests/boot_loader_sim myos.img kernel.bin
+	@echo "== RTL8139 RX ofset simulasyonu =="
+	@$(HOSTCC) -O2 -Wall -Wextra tests/rtl8139_rx_sim.c -o tests/rtl8139_rx_sim
+	@./tests/rtl8139_rx_sim
+	@echo "== Kalici FS (sync/mount) uctan uca testi =="
+	@# -nostdinc -Iinclude: kernel'in stdint.h/stddef.h'ini kullan (fs.h
+	@#  <stdint.h> ister); libc yine printf/memcpy icin baglanir.
+	@# -fno-builtin: kernel mem*'lerini GCC builtin'leriyle kiyaslayip
+	@#  uyari uretmesin (kernel size_t 32-bit, host builtin 64-bit bekler).
+	@$(HOSTCC) -O2 -Wall -Wextra -nostdinc -Iinclude -fno-builtin \
+	    tests/fs_persist_sim.c -o tests/fs_persist_sim
+	@./tests/fs_persist_sim
+	@echo "== GDT/TSS descriptor kodlama testi =="
+	@$(HOSTCC) -O2 -Wall -Wextra -nostdinc -Iinclude -fno-builtin \
+	    tests/gdt_sim.c -o tests/gdt_sim
+	@./tests/gdt_sim
+	@echo "== Gomulu userland ELF dogrulama testi =="
+	@$(HOSTCC) -O2 -Wall -Wextra -nostdinc -Iinclude tests/elf_sim.c -o tests/elf_sim
+	@./tests/elf_sim user/hello.elf
+	@echo "== ARP yanit insasi testi =="
+	@# -Wno-pointer-to-int-cast: net.c'nin (uint32_t)buffer DMA cast'leri
+	@#  32-bit kernel'de dogru; 64-bit host derlemesinde zararsizca uyarir.
+	@$(HOSTCC) -O2 -Wall -Wextra -nostdinc -Iinclude -fno-builtin \
+	    -Wno-pointer-to-int-cast tests/arp_sim.c -o tests/arp_sim
+	@./tests/arp_sim
+	@echo "Tum testler gecti."
+
 # Temizle
 clean:
 	rm -f boot/boot.bin kernel.bin myos.img
 	rm -f $(ASM_OBJS) $(C_OBJS)
+	rm -f tests/boot_loader_sim tests/rtl8139_rx_sim tests/fs_persist_sim tests/gdt_sim tests/elf_sim tests/arp_sim
+	rm -f user/hello.o user/hello.elf user/hello_elf.h
 	@echo "Temizlendi."
