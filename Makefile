@@ -95,7 +95,7 @@ debug: myos.img
 # - boot sektörü tam 512 bayt mı?
 # - LBA->CHS yükleyici kerneli birebir yeniden kuruyor mu?
 # - RTL8139 RX ofseti halka içinde sarıyor mu?
-test: myos.img tests/boot_loader_sim.c tests/rtl8139_rx_sim.c tests/fs_persist_sim.c tests/gdt_sim.c tests/elf_sim.c
+test: myos.img tests/boot_loader_sim.c tests/rtl8139_rx_sim.c tests/fs_persist_sim.c tests/gdt_sim.c tests/elf_sim.c tests/arp_sim.c
 	@echo "== Boot sektoru boyutu =="
 	@SZ=$$(stat -c%s boot/boot.bin); \
 	 if [ "$$SZ" -ne 512 ]; then echo "HATA: boot.bin $$SZ bayt (512 olmali)"; exit 1; fi; \
@@ -121,12 +121,18 @@ test: myos.img tests/boot_loader_sim.c tests/rtl8139_rx_sim.c tests/fs_persist_s
 	@echo "== Gomulu userland ELF dogrulama testi =="
 	@$(HOSTCC) -O2 -Wall -Wextra -nostdinc -Iinclude tests/elf_sim.c -o tests/elf_sim
 	@./tests/elf_sim user/hello.elf
+	@echo "== ARP yanit insasi testi =="
+	@# -Wno-pointer-to-int-cast: net.c'nin (uint32_t)buffer DMA cast'leri
+	@#  32-bit kernel'de dogru; 64-bit host derlemesinde zararsizca uyarir.
+	@$(HOSTCC) -O2 -Wall -Wextra -nostdinc -Iinclude -fno-builtin \
+	    -Wno-pointer-to-int-cast tests/arp_sim.c -o tests/arp_sim
+	@./tests/arp_sim
 	@echo "Tum testler gecti."
 
 # Temizle
 clean:
 	rm -f boot/boot.bin kernel.bin myos.img
 	rm -f $(ASM_OBJS) $(C_OBJS)
-	rm -f tests/boot_loader_sim tests/rtl8139_rx_sim tests/fs_persist_sim tests/gdt_sim tests/elf_sim
+	rm -f tests/boot_loader_sim tests/rtl8139_rx_sim tests/fs_persist_sim tests/gdt_sim tests/elf_sim tests/arp_sim
 	rm -f user/hello.o user/hello.elf user/hello_elf.h
 	@echo "Temizlendi."

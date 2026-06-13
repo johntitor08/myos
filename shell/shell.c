@@ -41,7 +41,7 @@ static void cmd_help(void) {
     screen_println(" Kullanici: run <elf> (ring-3'te calistir)");
     screen_println(" Hesap: calc <a> <op> <b>     (op: + - * / %)");
     screen_println(" Disk: diskinfo, diskread <lba>");
-    screen_println(" Ag: netinfo, udpsend <ip> <port> <msg>");
+    screen_println(" Ag: netinfo, udpsend <ip> <port> <msg>, arping <ip>");
     screen_println(" GUI: gui");
     screen_println(" Diger: echo, help");
 }
@@ -168,6 +168,19 @@ static void cmd_udpsend(char **av, int ac) {
         screen_print("Gonderildi: "); screen_println(msg);
     } else screen_println("Hata: Ag karti yok!");
     (void)n;
+}
+
+static void cmd_arping(char *ipstr) {
+    if(!ipstr){screen_println("Kullanim: arping <ip>");return;}
+    uint8_t ip[4]={0}; char *p=ipstr;
+    for(int i=0;i<4;i++){
+        while(*p>='0'&&*p<='9'){ip[i]=(uint8_t)(ip[i]*10+(*p-'0'));p++;}
+        if(*p=='.')p++;
+    }
+    ip_addr_t dst = (uint32_t)ip[0]|((uint32_t)ip[1]<<8)|((uint32_t)ip[2]<<16)|((uint32_t)ip[3]<<24);
+    if(arp_send_request(dst)==0){
+        screen_print("ARP istegi gonderildi: "); screen_println(ipstr);
+    } else screen_println("Hata: Ag karti yok!");
 }
 
 /* GUI demo görevi */
@@ -310,6 +323,7 @@ void shell_run(void) {
             else screen_println("Kullanim: diskread <lba>");
         }
         else if(!kstrcmp(argv[0],"udpsend")) cmd_udpsend(argv,argc);
+        else if(!kstrcmp(argv[0],"arping")) cmd_arping(argc>=2?argv[1]:0);
         else if(!kstrcmp(argv[0],"gui")) {
             screen_println("GUI moduna geciliyor... (Ctrl+Alt+G -> QEMU)");
             task_create("gui_demo", gui_demo_task, PRIORITY_NORMAL);

@@ -98,6 +98,7 @@ make clean  # Temizle
 - [x] ATA disk sürücüsü (gerçek disk I/O)
 - [x] Kalıcı dosya sistemi (MyFS'i ATA diskine sync/mount)
 - [x] ELF binary yükleme
+- [x] Ağ: RTL8139 + ARP istek/yanıt + ICMP echo (ping yolu tamam)
 - [x] Kullanıcı alanı (ring 3): GDT+TSS, user segmentleri, `enter_usermode`,
       `run <elf>` komutu (canlı doğrulama QEMU ile yapılmalı)
 - [ ] Kullanıcı programı için örnek/araç zinciri (userland toolchain)
