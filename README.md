@@ -102,4 +102,4 @@ make clean  # Temizle
 - [x] Kullanıcı alanı (ring 3): GDT+TSS, user segmentleri, `enter_usermode`,
       `run <elf>` komutu (canlı doğrulama QEMU ile yapılmalı)
 - [ ] Kullanıcı programı için örnek/araç zinciri (userland toolchain)
-- [ ] FAT16 dosya sistemi
+- [x] FAT16 dosya sistemi (salt-okunur: fatls, fatcat — gerçek imajları okur)

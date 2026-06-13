@@ -8,5 +8,8 @@ tests/fs_persist_sim
 tests/gdt_sim
 tests/elf_sim
 tests/arp_sim
+tests/fat16_sim
+fat16.img
+fat16_content.txt
 user/hello.elf
 user/hello_elf.h
