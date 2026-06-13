@@ -4,6 +4,7 @@
 #include "../include/fs.h"
 #include "../include/memory.h"
 #include "../include/timer.h"
+#include "../include/keyboard.h"
 #include "../include/idt.h"
 
 /* ============================================================
@@ -43,15 +44,13 @@ static uint32_t sys_write(uint32_t fd, uint32_t buf_addr, uint32_t len, uint32_t
     return len;
 }
 
-/* SYS_READ (2): klavyeden oku */
+/* SYS_READ (2): stdin'den (fd=0) bir satır oku (klavye, Enter'a kadar). */
 static uint32_t sys_read(uint32_t fd, uint32_t buf_addr, uint32_t len, uint32_t a4) {
-    (void)fd; (void)a4;
+    (void)a4;
     if (!user_buf_ok(buf_addr, len)) return (uint32_t)-1;
-    char *buf = (char *)buf_addr;
-    uint32_t i = 0;
-    /* Basit: fs_read ile dosya oku (fd > 2) veya stdin */
-    (void)buf; (void)i; (void)len;
-    return 0;
+    if (fd != 0) return (uint32_t)-1;          /* yalnız stdin destekli */
+    if (len == 0) return 0;
+    return (uint32_t)keyboard_readline((char *)buf_addr, (int)len);
 }
 
 /* SYS_GETPID (5) */
