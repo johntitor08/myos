@@ -9,6 +9,14 @@
  *
  * Çıkış: 0 = tüm kontroller geçti, !=0 = hata.
  * ============================================================ */
+/* critical.h, 32-bit pushf/pop ile irq_save/irq_restore tanımlar; bu asm
+ * 64-bit host'ta derlenmez. Guard'ı bastırıp no-op saplamalar koyarız
+ * (test arp_build_reply'ı çağırır; net_receive/resolve/dhcp çalıştırılmaz,
+ * yalnız derlenir). uint32_t henüz tanımlı değil; 'unsigned' kullan. */
+#define CRITICAL_H
+static unsigned irq_save(void)        { return 0; }
+static void     irq_restore(unsigned f) { (void)f; }
+
 #include "../net/net.c"
 
 extern int printf(const char *fmt, ...);
@@ -20,6 +28,8 @@ void screen_putchar(char c)        { (void)c; }
 void screen_print_hex(uint32_t v)  { (void)v; }
 void screen_print_int(int32_t v)   { (void)v; }
 void *kmalloc(size_t n)            { (void)n; return 0; }
+void task_sleep(uint32_t ms)       { (void)ms; }
+uint32_t timer_get_ticks(void)     { return 0; }
 
 static int fails = 0;
 #define CHK(c, m) do { if (!(c)) { printf("HATA: %s\n", (m)); fails++; } } while (0)

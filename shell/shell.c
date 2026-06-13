@@ -41,7 +41,7 @@ static void cmd_help(void) {
     screen_println(" Kullanici: run <elf> (ring-3'te calistir)");
     screen_println(" Hesap: calc <a> <op> <b>     (op: + - * / %)");
     screen_println(" Disk: diskinfo, diskread <lba>");
-    screen_println(" Ag: netinfo, udpsend <ip> <port> <msg>, arping <ip>");
+    screen_println(" Ag: netinfo, udpsend <ip> <port> <msg>, arping <ip>, dhcp");
     screen_println(" GUI: gui");
     screen_println(" Diger: echo, help");
 }
@@ -324,6 +324,11 @@ void shell_run(void) {
         }
         else if(!kstrcmp(argv[0],"udpsend")) cmd_udpsend(argv,argc);
         else if(!kstrcmp(argv[0],"arping")) cmd_arping(argc>=2?argv[1]:0);
+        else if(!kstrcmp(argv[0],"dhcp")){
+            screen_println("DHCP deneniyor...");
+            if(net_dhcp()==0) net_print_info();
+            else screen_println("DHCP basarisiz (zaman asimi).");
+        }
         else if(!kstrcmp(argv[0],"gui")) {
             screen_println("GUI moduna geciliyor... (Ctrl+Alt+G -> QEMU)");
             task_create("gui_demo", gui_demo_task, PRIORITY_NORMAL);
