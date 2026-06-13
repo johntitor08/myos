@@ -98,5 +98,7 @@ make clean  # Temizle
 - [x] ATA disk sürücüsü (gerçek disk I/O)
 - [x] Kalıcı dosya sistemi (MyFS'i ATA diskine sync/mount)
 - [x] ELF binary yükleme
-- [ ] Kullanıcı alanı (ring 3) — altyapı var, kabuk entegrasyonu bekliyor
+- [x] Kullanıcı alanı (ring 3): GDT+TSS, user segmentleri, `enter_usermode`,
+      `run <elf>` komutu (canlı doğrulama QEMU ile yapılmalı)
+- [ ] Kullanıcı programı için örnek/araç zinciri (userland toolchain)
 - [ ] FAT16 dosya sistemi

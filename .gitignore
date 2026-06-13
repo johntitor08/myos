@@ -5,3 +5,4 @@
 tests/boot_loader_sim
 tests/rtl8139_rx_sim
 tests/fs_persist_sim
+tests/gdt_sim

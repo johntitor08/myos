@@ -4,6 +4,7 @@
 #include "../include/paging.h"
 #include "../include/critical.h"
 #include "../include/kstring.h"
+#include "../include/gdt.h"
 
 static task_t   tasks[MAX_TASKS];
 static task_t  *current_task    = 0;
@@ -195,6 +196,10 @@ void task_yield(void) {
     next->state      = TASK_RUNNING;
     next->time_slice = QUANTUM_BASE * next->priority;
     current_task     = next;
+
+    /* TSS.esp0'i bu görevin kernel stack'ine ayarla: görev ring-3'teyse
+     * IRQ/syscall/fault bu stack'e geçmeli (yoksa ring-0 görevde önemsiz). */
+    if (next->kernel_stack) tss_set_kernel_stack(next->kernel_stack);
 
     if (next->page_dir) paging_switch(next->page_dir);
 

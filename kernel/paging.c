@@ -194,6 +194,15 @@ void paging_init(void) {
     /* VGA belleğini de map et (0xB8000) */
     paging_map(kernel_dir, 0xB8000, 0xB8000, PAGE_PRESENT | PAGE_WRITABLE);
 
+    /* Kullanıcı penceresini (ELF yükleme alanı + user stack, 5MB-9MB)
+     * ring-3 erişimine aç: identity map yalnız supervisor (PAGE_USER yok),
+     * bu yüzden PTE'lere PAGE_USER eklenmezse ring-3 kodu ilk komutta
+     * page-fault alır. Bu aralık 0-32MB identity penceresi içindedir. */
+    for (uint32_t addr = 0x500000; addr < 0x900000; addr += PAGE_SIZE) {
+        paging_map(kernel_dir, addr, addr,
+                   PAGE_PRESENT | PAGE_WRITABLE | PAGE_USER);
+    }
+
     /* Page directory'yi etkinleştir */
     paging_switch(kernel_dir);
 

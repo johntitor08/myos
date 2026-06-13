@@ -10,6 +10,7 @@
 #include "../include/ata.h"
 #include "../include/net.h"
 #include "../include/syscall.h"
+#include "../include/gdt.h"
 #include "stdint.h"
 
 static void task_heartbeat(void) {
@@ -40,6 +41,11 @@ void kernel_main(void) {
     screen_println("#  ATA+ELF+Ring3+Syscall+Net+GUI+Multitask  #");
     screen_println("##############################################");
     screen_set_color(COLOR_WHITE, COLOR_BLACK);
+
+    /* GDT+TSS'i IDT'den önce kur: ring-3 segmentleri + TSS hazır olsun.
+     * Kernel kod/veri seçicileri (0x08/0x10) bootloader ile aynı kaldığı
+     * için ring-0 çalışması kesintisiz devam eder. */
+    gdt_init();
 
     screen_print("[1/9] IDT...        "); idt_init(); __asm__ volatile("sti");
     screen_set_color(COLOR_LIGHT_GREEN,COLOR_BLACK); screen_println("[ OK ]"); screen_set_color(COLOR_WHITE,COLOR_BLACK);

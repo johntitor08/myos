@@ -10,6 +10,7 @@
 #include "../include/net.h"
 #include "../include/gui.h"
 #include "../include/elf.h"
+#include "../include/gdt.h"
 #include "../include/kstring.h"
 #include "stdint.h"
 
@@ -37,6 +38,7 @@ static void cmd_help(void) {
     screen_println(" Dosya: ls, cat, write, del, cp, mv, hexdump");
     screen_println(" Disk-FS: sync (diske kaydet), mount (diskten yukle)");
     screen_println(" Sistem: ps, kill, sleep, meminfo, uname, uptime, clear, reboot");
+    screen_println(" Kullanici: run <elf> (ring-3'te calistir)");
     screen_println(" Hesap: calc <a> <op> <b>     (op: + - * / %)");
     screen_println(" Disk: diskinfo, diskread <lba>");
     screen_println(" Ag: netinfo, udpsend <ip> <port> <msg>");
@@ -228,6 +230,34 @@ static void gui_demo_task(void) {
     }
 }
 
+/* ============================================================
+ * run <dosya> — FS'teki bir ELF'i ring-3 kullanıcı modunda çalıştır
+ * ============================================================ */
+static uint8_t  g_elf_buf[65536];   /* tek seferde bir kullanıcı programı */
+static uint32_t g_elf_size;
+
+/* Kullanıcı görevinin kernel-tarafı giriş noktası (ring-0). ELF'i yükler,
+ * TSS.esp0'i ayarlar ve ring-3'e geçer. Kullanıcı programı 'exit' syscall'i
+ * ile çıkınca task_exit zincirine düşer. */
+static void user_task_entry(void) {
+    elf_program_t prog;
+    if (elf_load(g_elf_buf, g_elf_size, &prog) != 0 || !prog.valid) {
+        screen_println("[RUN] ELF yuklenemedi.");
+        return;   /* task_exit_wrapper -> task_exit */
+    }
+    tss_set_kernel_stack(task_current()->kernel_stack);
+    enter_usermode(prog.entry, prog.stack);   /* geri dönmez */
+}
+
+static void cmd_run(char *fn) {
+    if (!fn) { screen_println("Kullanim: run <elf-dosya>"); return; }
+    int n = fs_read(fn, (char *)g_elf_buf, sizeof(g_elf_buf));
+    if (n < 0) { screen_println("Dosya bulunamadi!"); return; }
+    g_elf_size = (uint32_t)n;
+    if (!task_create("user", user_task_entry, PRIORITY_NORMAL))
+        screen_println("[RUN] Gorev olusturulamadi.");
+}
+
 static void cmd_reboot(void) {
     screen_set_color(COLOR_RED,COLOR_BLACK);
     screen_println("Yeniden baslatiliyor...");
@@ -298,6 +328,7 @@ void shell_run(void) {
         else if(!kstrcmp(argv[0],"cp"))      cmd_cp(argv,argc);
         else if(!kstrcmp(argv[0],"mv"))      cmd_mv(argv,argc);
         else if(!kstrcmp(argv[0],"hexdump")) cmd_hexdump(argc>=2?argv[1]:0);
+        else if(!kstrcmp(argv[0],"run"))     cmd_run(argc>=2?argv[1]:0);
         else if(!kstrcmp(argv[0],"echo")){
             for(int i=1;i<argc;i++){if(i>1)screen_putchar(' ');screen_print(argv[i]);}
             screen_putchar('\n');
