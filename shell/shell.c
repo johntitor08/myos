@@ -142,8 +142,10 @@ static void cmd_diskread(uint32_t lba) {
     static uint8_t sec[512];
     if(ata_read_sectors(lba,1,sec)!=0){screen_println("Okuma hatasi!");return;}
     screen_print("LBA "); screen_print_int((int32_t)lba); screen_println(":");
+    /* Bayt başına 2 hane yaz (screen_print_hex 0x+8 hane basar; 16/satir
+     * 80 sütuna sığmaz). hexdump ile aynı 2-haneli biçim. */
     for(int i=0;i<64;i++){
-        screen_print_hex(sec[i]); screen_putchar(' ');
+        print_hex2(sec[i]); screen_putchar(' ');
         if((i+1)%16==0) screen_putchar('\n');
     }
 }
